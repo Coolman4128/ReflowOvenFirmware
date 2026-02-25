@@ -23,6 +23,8 @@ void app_start()
     HardwareManager& manager = HardwareManager::getInstance();
     Controller* controller = new Controller();
     controller->SetSetPoint(30.0); // Set initial setpoint to 30 degrees Celsius
+    controller->SetInputFilterTime(1000); // Set input filter time to 1000 ms
+    controller->GetPIDController()->Tune(15.0, 2.0, 0.0); // Tune PID controller with some initial values (these would likely need to be adjusted for a real system)
     controller->Start();
      // Initialize hardware
     while(true){

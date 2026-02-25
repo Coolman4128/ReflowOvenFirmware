@@ -21,6 +21,7 @@ class Controller{
         double GetPIDOutput() const { return PIDOutput; }
         bool IsRunning() const { return running; }
         bool IsDoorOpen() const { return doorOpen; }
+        PID* GetPIDController() { return &pidController; }
         std::string GetStateTUI() const;
 
         // Interfacing with the controller settings:
