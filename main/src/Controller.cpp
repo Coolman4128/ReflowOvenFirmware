@@ -3,10 +3,19 @@
 #include <algorithm>
 #include <cstdio>
 
+Controller* Controller::instance = nullptr;
+
 
 // =================================================
 // ================ PUBLIC METHODS =================
 // =================================================
+
+Controller& Controller::getInstance() {
+    if (instance == nullptr) {
+        instance = new Controller();
+    }
+    return *instance;
+}
 
 // This is the constructor for the controller. 
 Controller::Controller()

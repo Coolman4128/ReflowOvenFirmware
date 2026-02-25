@@ -9,7 +9,11 @@
 
 class Controller{
     public:
-        Controller();
+        static Controller& getInstance();
+        Controller(const Controller&) = delete;
+        Controller& operator=(const Controller&) = delete;
+        Controller(Controller&&) = delete;
+        Controller& operator=(Controller&&) = delete;
 
         esp_err_t RunTick();
 
@@ -41,6 +45,8 @@ class Controller{
 
 
     private:
+        static Controller* instance;
+        Controller();
         constexpr static double TICK_INTERVAL_MS = 250.0; // 100 ms tick interval
         constexpr static double MAX_SETPOINT = 300.0; // Max temp in Celsius
         constexpr static double MIN_SETPOINT = 0.0; // Min temp in Celsius
