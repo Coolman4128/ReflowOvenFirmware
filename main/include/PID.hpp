@@ -13,7 +13,10 @@ class PID{
         double GetKp() const { return Kp; }
         double GetKi() const { return Ki; }
         double GetKd() const { return Kd; }
+        double GetDerivativeFilterTime() const { return derivativeFilterTime; }
         esp_err_t Tune(double Kp, double Ki, double Kd);
+        esp_err_t SetDerivativeFilterAlpha(double alpha);
+        esp_err_t SetDerivativeFilterTime(double filterTimeSeconds);
         esp_err_t Reset();
 
     private:
@@ -24,6 +27,7 @@ class PID{
         double OutputMax = 100.0;
 
         double DerivativeFilterAlpha = 1; // Smoothing factor for derivative term
+        double derivativeFilterTime = 0.0; // Time constant in seconds
 
         double integral = 0.0;
         double previousError = 0.0;

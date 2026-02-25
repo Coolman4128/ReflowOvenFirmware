@@ -8,6 +8,8 @@ idf_component_register(
         "src/app.cpp"
         "src/SettingsManager.cpp"
         "src/DataManager.cpp"
+        "src/WiFiManager.cpp"
+        "src/TimeManager.cpp"
     INCLUDE_DIRS
         "include"
 )

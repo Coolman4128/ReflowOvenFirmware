@@ -1,6 +1,11 @@
 #include "DataManager.hpp"
+#include "Controller.hpp"
+#include "HardwareManager.hpp"
+#include "PID.hpp"
+#include "SettingsManager.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_timer.h"
 
 DataManager* DataManager::instance = nullptr;
 
@@ -35,6 +40,10 @@ esp_err_t DataManager::ChangeDataLogInterval(int newIntervalMs) {
         return ESP_ERR_INVALID_ARG; // The combination of data log interval and max time saved must not exceed the max data points we can save
     }
     DataLogIntervalMs = newIntervalMs;
+    esp_err_t persistErr = SettingsManager::getInstance().SetDataLogIntervalMs(DataLogIntervalMs);
+    if (persistErr != ESP_OK) {
+        return persistErr;
+    }
     if (LogData) {
         esp_err_t err = StopDataLogLoop();
         if (err != ESP_OK) {
@@ -53,6 +62,10 @@ esp_err_t DataManager::ChangeMaxTimeSaved(int newMaxTimeSavedMs) {
         return ESP_ERR_INVALID_ARG; // The combination of data log interval and max time saved must not exceed the max data points we can save
     }
     MaxTimeSavedMS = newMaxTimeSavedMs;
+    esp_err_t persistErr = SettingsManager::getInstance().SetMaxDataLogTimeMs(MaxTimeSavedMS);
+    if (persistErr != ESP_OK) {
+        return persistErr;
+    }
     if (LogData) {
         esp_err_t err = StopDataLogLoop();
         if (err != ESP_OK) {
@@ -67,8 +80,9 @@ esp_err_t DataManager::ChangeMaxTimeSaved(int newMaxTimeSavedMs) {
 
 DataManager::DataManager() {
     // First thing is load in all the settings from the NVS service so we can start using them right away
-
-    // TO DO: Load settings from NVS, for now just use defaults
+    SettingsManager& settings = SettingsManager::getInstance();
+    DataLogIntervalMs = settings.GetDataLogIntervalMs();
+    MaxTimeSavedMS = settings.GetMaxDataLogTimeMs();
     
     dataLog.reserve(MAX_DATA_POINTS); // Reserve the max number of data points in the vector to prevent fragmentation and ensure we never exceed our max data size
     if (!CheckSettingsValid()) {
@@ -88,13 +102,53 @@ DataManager::DataManager() {
 }
 
 esp_err_t DataManager::StartDataLogLoop() {
-    // TO DO: Start a FreeRTOS task that runs the DataLogLoop function at the specified interval
-    return ESP_OK;
+    if (dataLogTaskHandle != nullptr) {
+        return ESP_ERR_INVALID_STATE; // Task already running
+    }
+
+    BaseType_t result;
+
+    #if CONFIG_FREERTOS_UNICORE
+        result = xTaskCreate(
+            dataLogTaskEntry,
+            "DataLogTask",
+            4096, // Stack size in words
+            this,
+            1, // Priority
+            &dataLogTaskHandle
+        );
+    #else
+        result = xTaskCreatePinnedToCore(
+            dataLogTaskEntry,
+            "DataLogTask",
+            4096, // Stack size in words
+            this,
+            1, // Priority
+            &dataLogTaskHandle,
+            0 // Run on core 0
+        );
+    #endif
+
+    return (result == pdPASS) ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t DataManager::StopDataLogLoop() {
-    // TO DO: Stop the FreeRTOS task that is running the DataLogLoop function
+    if (dataLogTaskHandle == nullptr) {
+        return ESP_ERR_INVALID_STATE; // Task not running
+    }
+
+    TaskHandle_t taskToDelete = dataLogTaskHandle;
+    dataLogTaskHandle = nullptr;
+    vTaskDelete(taskToDelete);
+
     return ESP_OK;
+}
+
+void DataManager::dataLogTaskEntry(void* arg) {
+    DataManager* manager = static_cast<DataManager*>(arg);
+    manager->DataLogLoop();
+    manager->dataLogTaskHandle = nullptr;
+    vTaskDelete(nullptr);
 }
 
 esp_err_t DataManager::DataLogLoop() {
@@ -111,10 +165,32 @@ esp_err_t DataManager::DataLogLoop() {
 }
 
 esp_err_t DataManager::LogDataPoint() {
-    
-    // TO DO: Read data and fill out the struct
     DataPoint newDataPoint;
     // Fill out here
+    newDataPoint.timestamp = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
+    newDataPoint.setPoint = Controller::getInstance().GetSetPoint();
+    newDataPoint.processValue = Controller::getInstance().GetProcessValue();
+    newDataPoint.PIDOutput = Controller::getInstance().GetPIDOutput();
+    newDataPoint.PTerm = Controller::getInstance().GetPIDController()->GetPreviousP();
+    newDataPoint.ITerm = Controller::getInstance().GetPIDController()->GetPreviousI();
+    newDataPoint.DTerm = Controller::getInstance().GetPIDController()->GetPreviousD();
+
+    for (int i = 0; i < 4; i++) {
+        newDataPoint.temperatureReadings[i] = HardwareManager::getInstance().getThermocoupleValue(i);
+    }
+
+    uint8_t relayStates = 0;
+    for (int i = 0; i < 6; i++) {
+        if (HardwareManager::getInstance().getRelayState(i)) {
+            relayStates |= (1 << i);
+        }
+    }
+    newDataPoint.relayStates = relayStates;
+    newDataPoint.servoAngle = static_cast<uint8_t>(HardwareManager::getInstance().getServoAngle());
+    newDataPoint.chamberRunning = Controller::getInstance().IsRunning();
+
+
+
 
     // Add the new data point to the log
     if (dataLog.size() + 1 > dataLog.capacity()) {

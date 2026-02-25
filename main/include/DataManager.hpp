@@ -2,10 +2,41 @@
 
 #include <cstdint>
 #include <vector>
+#include <cstdlib>
 #include "esp_err.h"
+#include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+template <typename T>
+class PsramAllocator {
+public:
+    using value_type = T;
+
+    PsramAllocator() noexcept = default;
+    template <typename U>
+    PsramAllocator(const PsramAllocator<U>&) noexcept {}
+
+    T* allocate(std::size_t n) {
+        void* ptr = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (ptr == nullptr) {
+            std::abort();
+        }
+        return static_cast<T*>(ptr);
+    }
+
+    void deallocate(T* ptr, std::size_t) noexcept {
+        heap_caps_free(ptr);
+    }
+
+    template <typename U>
+    bool operator==(const PsramAllocator<U>&) const noexcept { return true; }
+    template <typename U>
+    bool operator!=(const PsramAllocator<U>&) const noexcept { return false; }
+};
 
 struct DataPoint {
-    uint64_t timestamp; // The timestamp of the data point in milliseconds since 1970-01-01T00:00:00Z
+    uint64_t timestamp; // The timestamp of the data point in seconds since boot
     float setPoint; // The set point at the time of the data point
     float processValue; // The process value at the time of the data point
     float PIDOutput; // The PID output at the time of the data point
@@ -42,9 +73,12 @@ class DataManager{
         int DataLogIntervalMs = 1000.0; // How often to log data in milliseconds, 250ms to 10s
         int MaxTimeSavedMS = 1000 * 60 * 30; // How much historical data to save in milliseconds, 1 minute to 24 hours, resets at boot time
 
-        std::vector<DataPoint> dataLog;
+        std::vector<DataPoint, PsramAllocator<DataPoint>> dataLog;
 
         bool CheckSettingsValid();
+
+        TaskHandle_t dataLogTaskHandle = nullptr;
+        static void dataLogTaskEntry(void* arg);
 
         esp_err_t StartDataLogLoop();
         esp_err_t StopDataLogLoop();

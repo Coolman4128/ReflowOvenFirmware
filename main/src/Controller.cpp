@@ -1,5 +1,6 @@
 #include "Controller.hpp"
 #include "HardwareManager.hpp"
+#include "SettingsManager.hpp"
 #include <algorithm>
 #include <cstdio>
 
@@ -22,6 +23,13 @@ Controller::Controller()
     : pidController(),
       relayPWM(1000, 0.0f, &Controller::RelayOnThunk, &Controller::RelayOffThunk, this)
 {
+    SettingsManager& settings = SettingsManager::getInstance();
+    inputFilterTimeMs = settings.GetInputFilterTime();
+    (void)pidController.Tune(settings.GetProportionalGain(), settings.GetIntegralGain(), settings.GetDerivativeGain());
+    (void)pidController.SetDerivativeFilterTime(settings.GetDerivativeFilterTime());
+    ApplyInputsMask(settings.GetInputsIncludedMask());
+    ApplyRelaysPWMMask(settings.GetRelaysPWMMask());
+    ApplyRelaysOnMask(settings.GetRelaysOnMask());
 }
 
 esp_err_t Controller::RunTick() {
@@ -109,15 +117,47 @@ esp_err_t Controller::SetInputFilterTime(double newFilterTimeMs) {
         return ESP_ERR_INVALID_ARG; // Filter time must be positive
     }
     inputFilterTimeMs = newFilterTimeMs;
-    return ESP_OK;
+    return SettingsManager::getInstance().SetInputFilterTime(newFilterTimeMs);
+}
+
+esp_err_t Controller::SetPIDGains(double newKp, double newKi, double newKd) {
+    esp_err_t err = pidController.Tune(newKp, newKi, newKd);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    SettingsManager& settings = SettingsManager::getInstance();
+    err = settings.SetProportionalGain(newKp);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = settings.SetIntegralGain(newKi);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return settings.SetDerivativeGain(newKd);
+}
+
+esp_err_t Controller::SetDerivativeFilterTime(double newFilterTimeSeconds) {
+    if (newFilterTimeSeconds < 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = pidController.SetDerivativeFilterTime(newFilterTimeSeconds);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return SettingsManager::getInstance().SetDerivativeFilterTime(newFilterTimeSeconds);
 }
 
 esp_err_t Controller::AddInputChannel(int channel) {
+    if (channel < 0 || channel > 7) {
+        return ESP_ERR_INVALID_ARG;
+    }
     if (std::find(inputsBeingUsed.begin(), inputsBeingUsed.end(), channel) != inputsBeingUsed.end()) {
         return ESP_ERR_INVALID_ARG; // Channel already being used
     }
     inputsBeingUsed.push_back(channel);
-    return ESP_OK;
+    return SettingsManager::getInstance().SetInputsIncludedMask(BuildInputsMask());
 }
 
 esp_err_t Controller::RemoveInputChannel(int channel) {
@@ -126,7 +166,7 @@ esp_err_t Controller::RemoveInputChannel(int channel) {
         return ESP_ERR_INVALID_ARG; // Channel not found
     }
     inputsBeingUsed.erase(it);
-    return ESP_OK;
+    return SettingsManager::getInstance().SetInputsIncludedMask(BuildInputsMask());
 }
 
 std::string Controller::GetStateTUI() const {
@@ -331,6 +371,109 @@ void Controller::RelayOn() {
 void Controller::RelayOff() {
     for (const auto& [relayIndex, pwmValue] : relaysPWM) {
         HardwareManager::getInstance().setRelayState(relayIndex, false);
+    }
+}
+
+esp_err_t Controller::AddSetRelayPWM(int relayIndex, double pwmValue) {
+    if (relayIndex < 0 || relayIndex > 7) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (pwmValue <= 0.0) {
+        return RemoveRelayPWM(relayIndex);
+    }
+    relaysPWM[relayIndex] = pwmValue;
+    return SettingsManager::getInstance().SetRelaysPWMMask(BuildRelaysPWMMask());
+}
+
+esp_err_t Controller::RemoveRelayPWM(int relayIndex) {
+    auto it = relaysPWM.find(relayIndex);
+    if (it == relaysPWM.end()) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    relaysPWM.erase(it);
+    return SettingsManager::getInstance().SetRelaysPWMMask(BuildRelaysPWMMask());
+}
+
+esp_err_t Controller::AddRelayWhenRunning(int relayIndex) {
+    if (relayIndex < 0 || relayIndex > 7) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (std::find(relaysWhenControllerRunning.begin(), relaysWhenControllerRunning.end(), relayIndex) != relaysWhenControllerRunning.end()) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    relaysWhenControllerRunning.push_back(relayIndex);
+    return SettingsManager::getInstance().SetRelaysOnMask(BuildRelaysOnMask());
+}
+
+esp_err_t Controller::RemoveRelayWhenRunning(int relayIndex) {
+    auto it = std::find(relaysWhenControllerRunning.begin(), relaysWhenControllerRunning.end(), relayIndex);
+    if (it == relaysWhenControllerRunning.end()) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    relaysWhenControllerRunning.erase(it);
+    return SettingsManager::getInstance().SetRelaysOnMask(BuildRelaysOnMask());
+}
+
+uint8_t Controller::BuildInputsMask() const {
+    uint8_t mask = 0;
+    for (int channel : inputsBeingUsed) {
+        if (channel >= 0 && channel <= 7) {
+            mask |= static_cast<uint8_t>(1u << channel);
+        }
+    }
+    return mask;
+}
+
+uint8_t Controller::BuildRelaysPWMMask() const {
+    uint8_t mask = 0;
+    for (const auto& [relayIndex, pwmValue] : relaysPWM) {
+        if (relayIndex >= 0 && relayIndex <= 7 && pwmValue > 0) {
+            mask |= static_cast<uint8_t>(1u << relayIndex);
+        }
+    }
+    return mask;
+}
+
+uint8_t Controller::BuildRelaysOnMask() const {
+    uint8_t mask = 0;
+    for (int relayIndex : relaysWhenControllerRunning) {
+        if (relayIndex >= 0 && relayIndex <= 7) {
+            mask |= static_cast<uint8_t>(1u << relayIndex);
+        }
+    }
+    return mask;
+}
+
+void Controller::ApplyInputsMask(uint8_t mask) {
+    inputsBeingUsed.clear();
+    for (int channel = 0; channel < 8; ++channel) {
+        if ((mask & static_cast<uint8_t>(1u << channel)) != 0) {
+            inputsBeingUsed.push_back(channel);
+        }
+    }
+    if (inputsBeingUsed.empty()) {
+        inputsBeingUsed.push_back(0);
+    }
+}
+
+void Controller::ApplyRelaysPWMMask(uint8_t mask) {
+    relaysPWM.clear();
+    for (int relayIndex = 0; relayIndex < 8; ++relayIndex) {
+        if ((mask & static_cast<uint8_t>(1u << relayIndex)) != 0) {
+            relaysPWM[relayIndex] = 1.0;
+        }
+    }
+    if (relaysPWM.empty()) {
+        relaysPWM[0] = 1.0;
+    }
+}
+
+void Controller::ApplyRelaysOnMask(uint8_t mask) {
+    relaysWhenControllerRunning.clear();
+    for (int relayIndex = 0; relayIndex < 8; ++relayIndex) {
+        if ((mask & static_cast<uint8_t>(1u << relayIndex)) != 0) {
+            relaysWhenControllerRunning.push_back(relayIndex);
+        }
     }
 }
 

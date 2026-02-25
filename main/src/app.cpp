@@ -2,6 +2,10 @@
 #include "esp_log.h"
 #include "HardwareManager.hpp"
 #include "Controller.hpp"
+#include "DataManager.hpp"
+#include "SettingsManager.hpp"
+#include "WiFiManager.hpp"
+#include "TimeManager.hpp"
 #include <cstdio>
 
 static constexpr int CONTROLLER_TUI_LINES = 12;
@@ -20,11 +24,24 @@ static void PrintControllerStateTUI(const Controller& controller)
 
 void app_start()
 {
+    SettingsManager& settings = SettingsManager::getInstance();
+    (void)settings.Initialize();
+
+    WiFiManager& wifiManager = WiFiManager::getInstance();
+    (void)wifiManager.Initialize();
+    (void)wifiManager.ConnectToSavedNetwork();
+
+    TimeManager& timeManager = TimeManager::getInstance();
+    (void)timeManager.Initialize();
+
     HardwareManager& manager = HardwareManager::getInstance();
     Controller& controller = Controller::getInstance();
+    DataManager& dataManager = DataManager::getInstance();
+    (void)manager;
+    (void)dataManager;
+    (void)timeManager;
+
     controller.SetSetPoint(30.0); // Set initial setpoint to 30 degrees Celsius
-    controller.SetInputFilterTime(1000); // Set input filter time to 1000 ms
-    controller.GetPIDController()->Tune(15.0, 2.0, 0.0); // Tune PID controller with some initial values (these would likely need to be adjusted for a real system)
     controller.Start();
      // Initialize hardware
     while(true){

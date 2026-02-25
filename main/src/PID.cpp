@@ -27,6 +27,15 @@ double PID::Calculate(double setPoint, double processValue) {
     double error = setPoint - processValue;
     double dt = (esp_timer_get_time() - lastTimeUs) / 1e6; // Convert microseconds to seconds
     lastTimeUs = esp_timer_get_time();
+    if (dt <= 0.0) {
+        dt = 1e-6;
+    }
+
+    if (derivativeFilterTime > 0.0) {
+        DerivativeFilterAlpha = dt / (derivativeFilterTime + dt);
+    } else {
+        DerivativeFilterAlpha = 1.0;
+    }
 
     integral += error * dt;
     double derivative = (processValue - previousPV) / dt;
@@ -57,5 +66,22 @@ esp_err_t PID::Tune(double Kp, double Ki, double Kd) {
     this->Kp = Kp;
     this->Ki = Ki;
     this->Kd = Kd;
+    return ESP_OK;
+}
+
+esp_err_t PID::SetDerivativeFilterAlpha(double alpha) {
+    if (alpha < 0 || alpha > 1) {
+        return ESP_ERR_INVALID_ARG; // Alpha must be between 0 and 1
+    }
+    DerivativeFilterAlpha = alpha;
+    derivativeFilterTime = 0.0;
+    return ESP_OK;
+}
+
+esp_err_t PID::SetDerivativeFilterTime(double filterTimeSeconds) {
+    if (filterTimeSeconds < 0.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    derivativeFilterTime = filterTimeSeconds;
     return ESP_OK;
 }

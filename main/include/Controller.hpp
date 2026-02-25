@@ -35,6 +35,8 @@ class Controller{
         esp_err_t CloseDoor();
         esp_err_t SetSetPoint(double newSetPoint);
         esp_err_t SetInputFilterTime(double newFilterTimeMs);
+        esp_err_t SetPIDGains(double newKp, double newKi, double newKd);
+        esp_err_t SetDerivativeFilterTime(double newFilterTimeSeconds);
         esp_err_t AddInputChannel(int channel);
         esp_err_t RemoveInputChannel(int channel);
         esp_err_t AddSetRelayPWM(int relayIndex, double pwmValue);
@@ -81,6 +83,13 @@ class Controller{
 
         esp_err_t UpdateProcessValue();
         bool CheckAlarmingConditions();
+
+        uint8_t BuildInputsMask() const;
+        uint8_t BuildRelaysPWMMask() const;
+        uint8_t BuildRelaysOnMask() const;
+        void ApplyInputsMask(uint8_t mask);
+        void ApplyRelaysPWMMask(uint8_t mask);
+        void ApplyRelaysOnMask(uint8_t mask);
 
 
         esp_err_t RunningRelaysOn();
