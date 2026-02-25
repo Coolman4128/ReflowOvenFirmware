@@ -7,6 +7,7 @@ idf_component_register(
         "src/Controller.cpp"
         "src/app.cpp"
         "src/SettingsManager.cpp"
+        "src/DataManager.cpp"
     INCLUDE_DIRS
         "include"
 )
