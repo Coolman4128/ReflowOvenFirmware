@@ -48,6 +48,9 @@ private:
     // Schedule next timer event based on current state.
     esp_err_t ScheduleNextEdge();
 
+    // Schedule a specific delay in microseconds.
+    esp_err_t ScheduleDelayUs(int64_t delay_us);
+
     // Cancel any active timer.
     void CancelTimer();
 
@@ -67,4 +70,5 @@ private:
     State state_{State::Off};
     bool running_{false};
     bool timer_armed_{false};
+    int64_t section_started_us_{0};
 };

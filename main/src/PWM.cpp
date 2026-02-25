@@ -62,6 +62,7 @@ esp_err_t PWM::Start()
     // Start from OFF, schedule first edge based on off_ms_ (or immediate if off_ms_==0).
     state_ = State::Off;
     running_ = true;
+    section_started_us_ = esp_timer_get_time();
 
     // Invoke OFF callback once at start? Usually you *don't* want that unless forcing state.
     // So we do not call on_off_ here.
@@ -87,22 +88,57 @@ esp_err_t PWM::SetPeriodMs(uint32_t period_ms)
     }
     period_ms_ = period_ms;
     RecomputeDurations();
-    // takes effect on next edge; optionally you could reschedule here.
-    return ESP_OK;
+
+    if (!running_) {
+        return ESP_OK;
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+    const int64_t elapsed_us = std::max<int64_t>(0, now_us - section_started_us_);
+    uint32_t section_ms = (state_ == State::Off) ? off_ms_ : on_ms_;
+    if (section_ms == 0) {
+        section_ms = 1;
+    }
+    const int64_t section_us = static_cast<int64_t>(section_ms) * 1000;
+    int64_t remaining_us = section_us - elapsed_us;
+    if (remaining_us <= 0) {
+        remaining_us = 1000;
+    }
+
+    CancelTimer();
+    return ScheduleDelayUs(remaining_us);
 }
 
 esp_err_t PWM::SetDutyCycle(float duty_cycle)
 {
     duty_cycle_ = std::clamp(duty_cycle, 0.0f, 1.0f);
     RecomputeDurations();
-    // takes effect on next edge
-    return ESP_OK;
+
+    if (!running_) {
+        return ESP_OK;
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+    const int64_t elapsed_us = std::max<int64_t>(0, now_us - section_started_us_);
+    uint32_t section_ms = (state_ == State::Off) ? off_ms_ : on_ms_;
+    if (section_ms == 0) {
+        section_ms = 1;
+    }
+    const int64_t section_us = static_cast<int64_t>(section_ms) * 1000;
+    int64_t remaining_us = section_us - elapsed_us;
+    if (remaining_us <= 0) {
+        remaining_us = 1000;
+    }
+
+    CancelTimer();
+    return ScheduleDelayUs(remaining_us);
 }
 
 esp_err_t PWM::ForceOn()
 {
     if (state_ != State::On) {
         state_ = State::On;
+        section_started_us_ = esp_timer_get_time();
         if (on_on_) {
             on_on_(user_ctx_);
         }
@@ -118,6 +154,7 @@ esp_err_t PWM::ForceOff()
 {
     if (state_ != State::Off) {
         state_ = State::Off;
+        section_started_us_ = esp_timer_get_time();
         if (on_off_) {
             on_off_(user_ctx_);
         }
@@ -146,11 +183,13 @@ void PWM::OnTimer()
     // Toggle state
     if (state_ == State::Off) {
         state_ = State::On;
+        section_started_us_ = esp_timer_get_time();
         if (on_on_) {
             on_on_(user_ctx_);
         }
     } else {
         state_ = State::Off;
+        section_started_us_ = esp_timer_get_time();
         if (on_off_) {
             on_off_(user_ctx_);
         }
@@ -178,10 +217,6 @@ void PWM::RecomputeDurations()
 
 esp_err_t PWM::ScheduleNextEdge()
 {
-    if (timer_ == nullptr) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
     uint32_t delay_ms = (state_ == State::Off) ? off_ms_ : on_ms_;
 
     // Handle 0ms sections (duty=0 or duty=1). We still need edges:
@@ -193,6 +228,19 @@ esp_err_t PWM::ScheduleNextEdge()
     }
 
     const int64_t delay_us = static_cast<int64_t>(delay_ms) * 1000;
+
+    return ScheduleDelayUs(delay_us);
+}
+
+esp_err_t PWM::ScheduleDelayUs(int64_t delay_us)
+{
+    if (timer_ == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (delay_us <= 0) {
+        delay_us = 1000;
+    }
 
     esp_timer_handle_t handle = reinterpret_cast<esp_timer_handle_t>(timer_);
 

@@ -1,6 +1,7 @@
 #include "Controller.hpp"
 #include "HardwareManager.hpp"
 #include <algorithm>
+#include <cstdio>
 
 
 // =================================================
@@ -40,6 +41,12 @@ esp_err_t Controller::Start() {
         return err;
     }
 
+    err = relayPWM.Start();
+    if (err != ESP_OK) {
+        (void)RunningRelaysOff();
+        return err;
+    }
+
 
     running = true;
     state = "Steady State";
@@ -54,6 +61,13 @@ esp_err_t Controller::Stop() {
 
     // 1. Turn off any relays that should be on when the controller is running
     esp_err_t err = RunningRelaysOff();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    (void)relayPWM.SetDutyCycle(0.0f);
+    (void)relayPWM.ForceOff();
+    err = relayPWM.Stop();
     if (err != ESP_OK) {
         return err;
     }
@@ -106,6 +120,65 @@ esp_err_t Controller::RemoveInputChannel(int channel) {
     return ESP_OK;
 }
 
+std::string Controller::GetStateTUI() const {
+    std::string channels = "-";
+    if (!inputsBeingUsed.empty()) {
+        channels.clear();
+        for (size_t index = 0; index < inputsBeingUsed.size(); ++index) {
+            char part[16];
+            std::snprintf(part, sizeof(part), "%s%d", (index == 0 ? "" : ","), inputsBeingUsed[index]);
+            channels += part;
+        }
+    }
+
+    const char* runText = running ? "RUN" : "STOP";
+    const char* doorText = doorOpen ? "OPEN" : "CLOSED";
+    const char* alarmText = alarming ? "YES" : "NO";
+    const char* pidMode = PIDOutput > 0 ? "HEAT" : (PIDOutput < 0 ? "VENT" : "HOLD");
+
+    char line1[80];
+    char line2[80];
+    char line3[80];
+    char line4[80];
+    char line5[80];
+    char line6[80];
+    char line7[80];
+    char line8[80];
+    char line9[80];
+    char line10[80];
+    char line11[80];
+    char line12[80];
+
+    std::snprintf(line1, sizeof(line1), "+---------------------------------------------------------------+");
+    std::snprintf(line2, sizeof(line2), "|                    REFLOW CONTROLLER STATUS                   |");
+    std::snprintf(line3, sizeof(line3), "+---------------------------------------------------------------+");
+    std::snprintf(line4, sizeof(line4), "| Mode:%-6s State:%-16.16s Alarm:%-3s                           |", runText, state.c_str(), alarmText);
+    std::snprintf(line5, sizeof(line5), "| Door:%-6s Tick(ms):%-6.0f Filter(ms):%-7.1f                    |", doorText, TICK_INTERVAL_MS, inputFilterTimeMs);
+    std::snprintf(line6, sizeof(line6), "| Setpoint:%8.2f  PV:%10.2f  Error:%10.2f                      |", setPoint, processValue, (setPoint - processValue));
+    std::snprintf(line7, sizeof(line7), "| PID Out:%9.2f  PID Mode:%-8s                                 |", PIDOutput, pidMode);
+    std::snprintf(line8, sizeof(line8), "| Inputs:%3zu  Ch:%-47.47s |", inputsBeingUsed.size(), channels.c_str());
+    std::snprintf(line9, sizeof(line9), "| RelayPWM entries:%3zu  Running-relays:%3zu                     |", relaysPWM.size(), relaysWhenControllerRunning.size());
+    std::snprintf(line10, sizeof(line10), "| Bounds PV:[%6.1f,%6.1f] SP:[%6.1f,%6.1f]                     |", MIN_PROCESS_VALUE, MAX_PROCESS_VALUE, MIN_SETPOINT, MAX_SETPOINT);
+    std::snprintf(line11, sizeof(line11), "| Legend: RUN=active HEAT=relay PWM VENT=servo HOLD=idle PID    |");
+    std::snprintf(line12, sizeof(line12), "+---------------------------------------------------------------+");
+
+    std::string tui;
+    tui.reserve(1024);
+    tui += line1; tui += "\n";
+    tui += line2; tui += "\n";
+    tui += line3; tui += "\n";
+    tui += line4; tui += "\n";
+    tui += line5; tui += "\n";
+    tui += line6; tui += "\n";
+    tui += line7; tui += "\n";
+    tui += line8; tui += "\n";
+    tui += line9; tui += "\n";
+    tui += line10; tui += "\n";
+    tui += line11; tui += "\n";
+    tui += line12;
+    return tui;
+}
+
 
 
 // =================================================
@@ -153,7 +226,7 @@ esp_err_t Controller::PerformOnRunning() {
         relayPWM.SetDutyCycle(0);
         HardwareManager::getInstance().setServoAngle(0);
     }
-
+    return ESP_OK;
 }
 
 esp_err_t Controller::PerformOnNotRunning() {
@@ -164,6 +237,7 @@ esp_err_t Controller::PerformOnNotRunning() {
     } else {
         HardwareManager::getInstance().setServoAngle(0); // If the door is closed, turn the servo to 0 degrees to close the vent
     }
+    return ESP_OK;
 }
 
 esp_err_t Controller::UpdateProcessValue() {

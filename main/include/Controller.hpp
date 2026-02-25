@@ -21,6 +21,7 @@ class Controller{
         double GetPIDOutput() const { return PIDOutput; }
         bool IsRunning() const { return running; }
         bool IsDoorOpen() const { return doorOpen; }
+        std::string GetStateTUI() const;
 
         // Interfacing with the controller settings:
         esp_err_t Start();

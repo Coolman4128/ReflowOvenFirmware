@@ -3,6 +3,7 @@ idf_component_register(
         "src/main.cpp"
         "src/HardwareManager.cpp"
         "src/PWM.cpp"
+        "src/PID.cpp"
         "src/Controller.cpp"
         "src/app.cpp"
     INCLUDE_DIRS

@@ -2,7 +2,7 @@
 
 class PID{
     public:
-        PID();
+        PID() = default;
         double Calculate(double setPoint, double processValue);
 
     private:

@@ -9,6 +9,11 @@
 class HardwareManager {
 public:
     static HardwareManager& getInstance();
+    HardwareManager(const HardwareManager&) = delete;
+    HardwareManager& operator=(const HardwareManager&) = delete;
+    HardwareManager(HardwareManager&&) = delete;
+    HardwareManager& operator=(HardwareManager&&) = delete;
+
     double getThermocoupleValue(int index);
     esp_err_t setRelayState(int relayIndex, bool state);
     bool getRelayState(int relayIndex);

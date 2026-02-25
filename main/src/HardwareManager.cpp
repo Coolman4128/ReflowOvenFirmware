@@ -140,8 +140,8 @@ esp_err_t HardwareManager::servoSetup() {
     mcpwm_timer_config_t timerConfig {};
     timerConfig.group_id = 0; // Use group 0
     timerConfig.clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT;
-    timerConfig.resolution_hz = 1000000 / SERVO_PERIOD_US; // Resolution in Hz based on the desired period
-    timerConfig.period_ticks = 1000000 / SERVO_PERIOD_US; // Number of ticks in one period
+    timerConfig.resolution_hz = 1000000; // 1 tick = 1us
+    timerConfig.period_ticks = SERVO_PERIOD_US; // 20ms period for 50Hz servo PWM
     timerConfig.count_mode = MCPWM_TIMER_COUNT_MODE_UP;
 
     esp_err_t err = mcpwm_new_timer(&timerConfig, &servoTimer);
@@ -260,7 +260,6 @@ esp_err_t HardwareManager::startThermocoupleReadTask(){
         return ESP_ERR_INVALID_STATE; // Task already running
     }
 
-    const TickType_t period = pdMS_TO_TICKS(THERMOCOUPLE_READ_INTERVAL_MS);
     BaseType_t result;
 
     #if CONFIG_FREERTOS_UNICORE
