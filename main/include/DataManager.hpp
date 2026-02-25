@@ -3,10 +3,12 @@
 #include <cstdint>
 #include <vector>
 #include <cstdlib>
+#include <cstddef>
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 template <typename T>
 class PsramAllocator {
@@ -55,11 +57,18 @@ class DataManager{
         static DataManager& getInstance();
         esp_err_t LogginOn();
         esp_err_t LoggingOff();
+        esp_err_t SetLoggingEnabled(bool enabled);
         esp_err_t ChangeDataLogInterval(int newIntervalMs);
         esp_err_t ChangeMaxTimeSaved(int newMaxTimeSavedMs);
-        int GetDataLogIntervalMs() const { return DataLogIntervalMs; }
-        int GetMaxTimeSavedMS() const { return MaxTimeSavedMS; }
-        bool IsLogging() const { return LogData; }
+        int GetDataLogIntervalMs() const;
+        int GetMaxTimeSavedMS() const;
+        bool IsLogging() const;
+        std::vector<DataPoint> GetRecentData(std::size_t limit) const;
+        std::vector<DataPoint> GetAllData() const;
+        esp_err_t ClearData();
+        std::size_t GetDataPointCount() const;
+        std::size_t GetMaxDataPoints() const { return MAX_DATA_POINTS; }
+        std::size_t GetStorageBytesUsed() const;
 
 
     private:
@@ -70,10 +79,11 @@ class DataManager{
 
         // Settings
         bool LogData = true; // Whether to log data at all, if false, no data will be logged regardless of other settings
-        int DataLogIntervalMs = 1000.0; // How often to log data in milliseconds, 250ms to 10s
+        int DataLogIntervalMs = 1000; // How often to log data in milliseconds, 250ms to 10s
         int MaxTimeSavedMS = 1000 * 60 * 30; // How much historical data to save in milliseconds, 1 minute to 24 hours, resets at boot time
 
         std::vector<DataPoint, PsramAllocator<DataPoint>> dataLog;
+        mutable SemaphoreHandle_t dataMutex = nullptr;
 
         bool CheckSettingsValid();
 

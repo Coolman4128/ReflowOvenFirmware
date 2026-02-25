@@ -48,11 +48,15 @@ double PID::Calculate(double setPoint, double processValue) {
     double outputI = Ki * integral;
     if ((outputI + outputNoI) > OutputMax) {
         outputI = std::max(0.0, OutputMax - outputNoI); // Prevent integral windup
-        integral = outputI / Ki; // Adjust integral to match the clamped output
+        if (Ki != 0.0) {
+            integral = outputI / Ki; // Adjust integral to match the clamped output
+        }
     }
     else if ((outputI + outputNoI) < OutputMin) {
         outputI = std::min(0.0, OutputMin - outputNoI); // Prevent integral windup
-        integral = outputI / Ki; // Adjust integral to match the clamped output
+        if (Ki != 0.0) {
+            integral = outputI / Ki; // Adjust integral to match the clamped output
+        }
     }
     double output = outputNoI + outputI;
     output = std::clamp(output, OutputMin, OutputMax);

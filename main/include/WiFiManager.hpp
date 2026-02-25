@@ -16,6 +16,13 @@ struct WiFiNetworkInfo {
     wifi_auth_mode_t authMode;
 };
 
+struct WiFiConnectionStatus {
+    bool connected = false;
+    std::string ssid;
+    std::string ipAddress;
+    int rssi = -127;
+};
+
 class WiFiManager {
 public:
     static WiFiManager& getInstance();
@@ -30,6 +37,10 @@ public:
     esp_err_t ConnectToSavedNetwork(uint32_t timeoutMs = 15000);
     esp_err_t Disconnect();
     bool IsConnected() const;
+    std::string GetConnectedSSID() const;
+    int GetConnectedRSSI() const;
+    std::string GetLocalIPAddress() const;
+    WiFiConnectionStatus GetConnectionStatus() const;
 
 private:
     WiFiManager() = default;

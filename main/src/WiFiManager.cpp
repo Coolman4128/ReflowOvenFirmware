@@ -6,6 +6,8 @@
 #include "esp_wifi.h"
 #include "freertos/event_groups.h"
 #include <cstring>
+#include <cstdio>
+#include "lwip/ip4_addr.h"
 
 namespace {
 constexpr EventBits_t WIFI_CONNECTED_BIT = BIT0;
@@ -183,6 +185,60 @@ bool WiFiManager::IsConnected() const {
     }
     EventBits_t bits = xEventGroupGetBits(eventGroup);
     return (bits & WIFI_CONNECTED_BIT) != 0;
+}
+
+std::string WiFiManager::GetConnectedSSID() const {
+    if (!IsConnected()) {
+        return "";
+    }
+
+    wifi_ap_record_t apInfo = {};
+    if (esp_wifi_sta_get_ap_info(&apInfo) != ESP_OK) {
+        return "";
+    }
+
+    return std::string(reinterpret_cast<const char*>(apInfo.ssid));
+}
+
+int WiFiManager::GetConnectedRSSI() const {
+    if (!IsConnected()) {
+        return -127;
+    }
+
+    wifi_ap_record_t apInfo = {};
+    if (esp_wifi_sta_get_ap_info(&apInfo) != ESP_OK) {
+        return -127;
+    }
+
+    return apInfo.rssi;
+}
+
+std::string WiFiManager::GetLocalIPAddress() const {
+    if (!IsConnected() || staNetif == nullptr) {
+        return "";
+    }
+
+    esp_netif_ip_info_t ipInfo = {};
+    if (esp_netif_get_ip_info(staNetif, &ipInfo) != ESP_OK) {
+        return "";
+    }
+
+    char buffer[16] = {};
+    std::snprintf(buffer, sizeof(buffer), IPSTR, IP2STR(&ipInfo.ip));
+    return std::string(buffer);
+}
+
+WiFiConnectionStatus WiFiManager::GetConnectionStatus() const {
+    WiFiConnectionStatus status;
+    status.connected = IsConnected();
+    if (!status.connected) {
+        return status;
+    }
+
+    status.ssid = GetConnectedSSID();
+    status.rssi = GetConnectedRSSI();
+    status.ipAddress = GetLocalIPAddress();
+    return status;
 }
 
 void WiFiManager::WiFiEventHandler(void* arg, esp_event_base_t eventBase, int32_t eventId, void* eventData) {

@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "PID.hpp"
 #include "PWM.hpp"
 
@@ -19,12 +21,17 @@ class Controller{
 
 
         // Getting state info for controller:
-        double GetSetPoint() const { return setPoint; }
-        double GetProcessValue() const { return processValue; }
-        std::string GetState() const { return state; }
-        double GetPIDOutput() const { return PIDOutput; }
-        bool IsRunning() const { return running; }
-        bool IsDoorOpen() const { return doorOpen; }
+        double GetSetPoint() const;
+        double GetProcessValue() const;
+        std::string GetState() const;
+        double GetPIDOutput() const;
+        bool IsRunning() const;
+        bool IsDoorOpen() const;
+        bool IsAlarming() const;
+        double GetInputFilterTimeMs() const;
+        std::vector<int> GetInputChannels() const;
+        std::vector<int> GetRelaysPWMEnabled() const;
+        std::vector<int> GetRelaysWhenRunning() const;
         PID* GetPIDController() { return &pidController; }
         std::string GetStateTUI() const;
 
@@ -39,10 +46,13 @@ class Controller{
         esp_err_t SetDerivativeFilterTime(double newFilterTimeSeconds);
         esp_err_t AddInputChannel(int channel);
         esp_err_t RemoveInputChannel(int channel);
+        esp_err_t SetInputChannels(const std::vector<int>& channels);
         esp_err_t AddSetRelayPWM(int relayIndex, double pwmValue);
         esp_err_t RemoveRelayPWM(int relayIndex);
+        esp_err_t SetRelayPWMEnabled(const std::vector<int>& relayIndices);
         esp_err_t AddRelayWhenRunning(int relayIndex);
         esp_err_t RemoveRelayWhenRunning(int relayIndex);
+        esp_err_t SetRelaysWhenRunning(const std::vector<int>& relayIndices);
 
 
 
@@ -66,6 +76,8 @@ class Controller{
         // Controller Runtime properties
         double setPoint = 0.0;
         double processValue = 0.0;
+        double filteredProcessValue = 0.0;
+        bool hasFilteredProcessValue = false;
         double PIDOutput = 0.0;
 
         // Controller Tuning Settings
@@ -73,7 +85,8 @@ class Controller{
         std::vector<int> inputsBeingUsed = {0}; // Default to channel 0 only.
         std::unordered_map<int, double> relaysPWM = {{0, 1.0}, {1, 0.5}}; // Default to relay 0 at 100 strength, and relay 1 at 50% strength
         std::vector<int> relaysWhenControllerRunning = {2}; // Default to turning on relay 2 when the controller is running, off otherwise
-        
+
+        mutable SemaphoreHandle_t stateMutex = nullptr;
 
 
 

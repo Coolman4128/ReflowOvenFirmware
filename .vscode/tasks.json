@@ -1,0 +1,51 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Frontend: Install",
+      "type": "shell",
+      "command": "npm install",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Frontend: Dev (Mock)",
+      "type": "shell",
+      "command": "npm run dev:mock",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Frontend: Build for Firmware",
+      "type": "shell",
+      "command": "npm run build:firmware",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Firmware: Build",
+      "type": "shell",
+      "command": "idf.py build",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build: Frontend + Firmware",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Frontend: Build for Firmware",
+        "Firmware: Build"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

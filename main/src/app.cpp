@@ -1,52 +1,78 @@
 #include "app.hpp"
-#include "esp_log.h"
-#include "HardwareManager.hpp"
+
 #include "Controller.hpp"
 #include "DataManager.hpp"
+#include "HardwareManager.hpp"
 #include "SettingsManager.hpp"
-#include "WiFiManager.hpp"
 #include "TimeManager.hpp"
-#include <cstdio>
+#include "WebServerManager.hpp"
+#include "WiFiManager.hpp"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
-static constexpr int CONTROLLER_TUI_LINES = 12;
+namespace {
+constexpr const char* TAG = "app";
+constexpr uint32_t CONTROLLER_TICK_MS = 250;
+TaskHandle_t controllerTaskHandle = nullptr;
 
-static void PrintControllerStateTUI(const Controller& controller)
-{
-    static bool firstDraw = true;
-    if (!firstDraw) {
-        std::printf("\033[%dA", CONTROLLER_TUI_LINES);
+void ControllerTaskEntry(void* /*arg*/) {
+    Controller& controller = Controller::getInstance();
+    while (true) {
+        (void)controller.RunTick();
+        vTaskDelay(pdMS_TO_TICKS(CONTROLLER_TICK_MS));
     }
-    std::printf("%s\n", controller.GetStateTUI().c_str());
-    std::fflush(stdout);
-    firstDraw = false;
 }
 
+esp_err_t StartControllerTask() {
+    if (controllerTaskHandle != nullptr) {
+        return ESP_OK;
+    }
+
+    BaseType_t result;
+#if CONFIG_FREERTOS_UNICORE
+    result = xTaskCreate(
+        &ControllerTaskEntry,
+        "ControllerTask",
+        4096,
+        nullptr,
+        2,
+        &controllerTaskHandle
+    );
+#else
+    result = xTaskCreatePinnedToCore(
+        &ControllerTaskEntry,
+        "ControllerTask",
+        4096,
+        nullptr,
+        2,
+        &controllerTaskHandle,
+        1
+    );
+#endif
+
+    return (result == pdPASS) ? ESP_OK : ESP_FAIL;
+}
+}
 
 void app_start()
 {
     SettingsManager& settings = SettingsManager::getInstance();
-    (void)settings.Initialize();
+    ESP_ERROR_CHECK(settings.Initialize());
 
     WiFiManager& wifiManager = WiFiManager::getInstance();
-    (void)wifiManager.Initialize();
+    ESP_ERROR_CHECK(wifiManager.Initialize());
     (void)wifiManager.ConnectToSavedNetwork();
 
     TimeManager& timeManager = TimeManager::getInstance();
-    (void)timeManager.Initialize();
+    ESP_ERROR_CHECK(timeManager.Initialize());
 
-    HardwareManager& manager = HardwareManager::getInstance();
-    Controller& controller = Controller::getInstance();
-    DataManager& dataManager = DataManager::getInstance();
-    (void)manager;
-    (void)dataManager;
-    (void)timeManager;
+    (void)HardwareManager::getInstance();
+    (void)Controller::getInstance();
+    (void)DataManager::getInstance();
 
-    controller.SetSetPoint(30.0); // Set initial setpoint to 30 degrees Celsius
-    controller.Start();
-     // Initialize hardware
-    while(true){
-        controller.RunTick();
-        PrintControllerStateTUI(controller);
-        vTaskDelay(pdMS_TO_TICKS(250));
-    }
+    ESP_ERROR_CHECK(StartControllerTask());
+    ESP_ERROR_CHECK(WebServerManager::getInstance().Initialize());
+
+    ESP_LOGI(TAG, "Application startup complete");
 }
