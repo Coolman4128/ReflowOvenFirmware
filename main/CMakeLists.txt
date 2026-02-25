@@ -6,6 +6,7 @@ idf_component_register(
         "src/PID.cpp"
         "src/Controller.cpp"
         "src/app.cpp"
+        "src/SettingsManager.cpp"
     INCLUDE_DIRS
         "include"
 )
