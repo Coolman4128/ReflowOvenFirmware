@@ -85,6 +85,10 @@ export interface ControllerConfig {
   inputs: number[];
   relays: {
     pwm_relays: number[];
+    pwm_relay_weights: Array<{
+      relay: number;
+      weight: number;
+    }>;
     running_relays: number[];
   };
 }

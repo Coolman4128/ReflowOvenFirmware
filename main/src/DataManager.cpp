@@ -121,8 +121,8 @@ bool DataManager::IsLogging() const {
     return LogData;
 }
 
-std::vector<DataPoint> DataManager::GetRecentData(std::size_t limit) const {
-    std::vector<DataPoint> out;
+DataPointStorage DataManager::GetRecentData(std::size_t limit) const {
+    DataPointStorage out;
 
     ScopedDataLock lock(dataMutex);
     if (dataLog.empty()) {
@@ -140,7 +140,7 @@ std::vector<DataPoint> DataManager::GetRecentData(std::size_t limit) const {
     return out;
 }
 
-std::vector<DataPoint> DataManager::GetAllData() const {
+DataPointStorage DataManager::GetAllData() const {
     return GetRecentData(0);
 }
 

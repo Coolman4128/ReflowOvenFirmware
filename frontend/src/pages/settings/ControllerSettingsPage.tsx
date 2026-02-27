@@ -13,11 +13,23 @@ function csvToNumbers(input: string): number[] {
     .filter((v) => Number.isFinite(v));
 }
 
+function clampWeight(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(1, Math.max(0, value));
+}
+
+function sanitizeRelays(input: string): number[] {
+  return Array.from(new Set(csvToNumbers(input).map((value) => Math.trunc(value))))
+    .filter((value) => value >= 0 && value <= 7)
+    .sort((a, b) => a - b);
+}
+
 export function ControllerSettingsPage({ onBack }: Props) {
   const [config, setConfig] = useState<ControllerConfig | null>(null);
   const [inputsCsv, setInputsCsv] = useState('0');
   const [pwmRelaysCsv, setPwmRelaysCsv] = useState('0,1');
   const [runningRelaysCsv, setRunningRelaysCsv] = useState('2');
+  const [relayWeights, setRelayWeights] = useState<Record<number, number>>({});
 
   const refresh = async () => {
     const value = await api.getControllerConfig();
@@ -31,6 +43,16 @@ export function ControllerSettingsPage({ onBack }: Props) {
     setInputsCsv(value.inputs.join(','));
     setPwmRelaysCsv(value.relays.pwm_relays.join(','));
     setRunningRelaysCsv(value.relays.running_relays.join(','));
+    const nextWeights: Record<number, number> = {};
+    for (let relay = 0; relay < 8; relay += 1) {
+      nextWeights[relay] = 1;
+    }
+    for (const entry of value.relays.pwm_relay_weights ?? []) {
+      if (Number.isFinite(entry.relay) && entry.relay >= 0 && entry.relay <= 7) {
+        nextWeights[entry.relay] = clampWeight(entry.weight);
+      }
+    }
+    setRelayWeights(nextWeights);
   };
 
   useEffect(() => {
@@ -55,7 +77,13 @@ export function ControllerSettingsPage({ onBack }: Props) {
   };
 
   const saveRelays = async () => {
-    await api.updateRelays(csvToNumbers(pwmRelaysCsv), csvToNumbers(runningRelaysCsv));
+    const pwmRelays = sanitizeRelays(pwmRelaysCsv);
+    const runningRelays = sanitizeRelays(runningRelaysCsv);
+    const pwmRelayWeights = pwmRelays.map((relay) => ({
+      relay,
+      weight: clampWeight(relayWeights[relay] ?? 1)
+    }));
+    await api.updateRelays(pwmRelays, runningRelays, pwmRelayWeights);
     await refresh();
   };
 
@@ -123,6 +151,25 @@ export function ControllerSettingsPage({ onBack }: Props) {
         <h3 className="section-title">Relay Grouping</h3>
         <label className="label">PWM Relays CSV (0-7)</label>
         <input className="input" value={pwmRelaysCsv} onChange={(e) => setPwmRelaysCsv(e.target.value)} />
+        <div className="grid two" style={{ marginTop: '0.75rem' }}>
+          {Array.from({ length: 8 }, (_, relay) => (
+            <div key={relay}>
+              <label className="label">Relay {relay} PWM Weight (0-1)</label>
+              <input
+                className="input"
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={relayWeights[relay] ?? 1}
+                onChange={(e) => setRelayWeights({ ...relayWeights, [relay]: clampWeight(Number(e.target.value)) })}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="muted" style={{ marginTop: '0.5rem' }}>
+          Relay weights are only applied to relays listed in PWM Relays CSV. A weight of 0 keeps that selected relay always off.
+        </div>
         <label className="label" style={{ marginTop: '0.5rem' }}>Running Relays CSV (0-7)</label>
         <input className="input" value={runningRelaysCsv} onChange={(e) => setRunningRelaysCsv(e.target.value)} />
         <button className="primary" style={{ marginTop: '0.75rem' }} onClick={saveRelays}>Save Relays</button>

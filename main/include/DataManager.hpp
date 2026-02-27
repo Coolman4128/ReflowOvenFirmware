@@ -54,6 +54,7 @@ struct DataPoint {
     bool chamberRunning; // Whether the chamber was running at the time of the data point
 };
 
+using DataPointStorage = std::vector<DataPoint, PsramAllocator<DataPoint>>;
 
 class DataManager{
     public:
@@ -66,8 +67,8 @@ class DataManager{
         int GetDataLogIntervalMs() const;
         int GetMaxTimeSavedMS() const;
         bool IsLogging() const;
-        std::vector<DataPoint> GetRecentData(std::size_t limit) const;
-        std::vector<DataPoint> GetAllData() const;
+        DataPointStorage GetRecentData(std::size_t limit) const;
+        DataPointStorage GetAllData() const;
         esp_err_t ClearData();
         std::size_t GetDataPointCount() const;
         std::size_t GetMaxDataPoints() const { return maxDataPoints; }
@@ -85,7 +86,7 @@ class DataManager{
         int DataLogIntervalMs = 1000; // How often to log data in milliseconds, 250ms to 10s
         int MaxTimeSavedMS = 1000 * 60 * 30; // How much historical data to save in milliseconds, 1 minute to 24 hours, resets at boot time
 
-        std::vector<DataPoint, PsramAllocator<DataPoint>> dataLog;
+        DataPointStorage dataLog;
         std::size_t maxDataPoints = MAX_DATA_POINTS;
         mutable SemaphoreHandle_t dataMutex = nullptr;
 

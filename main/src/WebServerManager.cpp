@@ -23,13 +23,15 @@
 #include <cstring>
 #include <string>
 #include <sys/stat.h>
+#include <unordered_map>
 #include <vector>
 
 namespace {
 constexpr const char* TAG = "WebServer";
 constexpr const char* SPIFFS_BASE_PATH = "/spiffs";
 constexpr const char* SPIFFS_PARTITION_LABEL = "spiffs";
-constexpr TickType_t WS_TELEMETRY_PERIOD_TICKS = pdMS_TO_TICKS(250);
+constexpr TickType_t WS_TELEMETRY_PERIOD_TICKS = pdMS_TO_TICKS(500);
+constexpr TickType_t WS_IDLE_PERIOD_TICKS = pdMS_TO_TICKS(1000);
 
 std::string JsonStringFromObject(cJSON* json) {
     if (json == nullptr) {
@@ -67,15 +69,47 @@ bool ParseIntArray(cJSON* arr, std::vector<int>& out) {
     return true;
 }
 
+bool ParseRelayWeightArray(cJSON* arr, std::unordered_map<int, double>& out) {
+    if (!cJSON_IsArray(arr)) {
+        return false;
+    }
+
+    out.clear();
+    const int count = cJSON_GetArraySize(arr);
+    out.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        cJSON* entry = cJSON_GetArrayItem(arr, i);
+        if (!cJSON_IsObject(entry)) {
+            return false;
+        }
+
+        cJSON* relay = cJSON_GetObjectItem(entry, "relay");
+        cJSON* weight = cJSON_GetObjectItem(entry, "weight");
+        if (!cJSON_IsNumber(relay) || !cJSON_IsNumber(weight)) {
+            return false;
+        }
+
+        const int relayIndex = relay->valueint;
+        const double relayWeight = weight->valuedouble;
+        if (relayIndex < 0 || relayIndex > 7 || relayWeight < 0.0 || relayWeight > 1.0) {
+            return false;
+        }
+
+        out[relayIndex] = relayWeight;
+    }
+
+    return true;
+}
+
 const char* ContentTypeForPath(const std::string& path) {
-    if (path.size() >= 5 && path.substr(path.size() - 5) == ".html") return "text/html";
-    if (path.size() >= 4 && path.substr(path.size() - 4) == ".css") return "text/css";
-    if (path.size() >= 3 && path.substr(path.size() - 3) == ".js") return "application/javascript";
-    if (path.size() >= 5 && path.substr(path.size() - 5) == ".json") return "application/json";
+    if (path.size() >= 5 && path.substr(path.size() - 5) == ".html") return "text/html; charset=utf-8";
+    if (path.size() >= 4 && path.substr(path.size() - 4) == ".css") return "text/css; charset=utf-8";
+    if (path.size() >= 3 && path.substr(path.size() - 3) == ".js") return "application/javascript; charset=utf-8";
+    if (path.size() >= 5 && path.substr(path.size() - 5) == ".json") return "application/json; charset=utf-8";
     if (path.size() >= 4 && path.substr(path.size() - 4) == ".png") return "image/png";
     if (path.size() >= 4 && path.substr(path.size() - 4) == ".svg") return "image/svg+xml";
     if (path.size() >= 4 && path.substr(path.size() - 4) == ".ico") return "image/x-icon";
-    if (path.size() >= 4 && path.substr(path.size() - 4) == ".csv") return "text/csv";
+    if (path.size() >= 4 && path.substr(path.size() - 4) == ".csv") return "text/csv; charset=utf-8";
     return "application/octet-stream";
 }
 
@@ -216,6 +250,9 @@ esp_err_t WebServerManager::StartServer() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.max_uri_handlers = 20;
+    // cJSON + float formatting in status/config endpoints can exceed the default
+    // httpd stack on ESP32-S3. Use a larger stack to avoid stack corruption/panics.
+    config.stack_size = 8192;
 
     esp_err_t err = httpd_start(&server, &config);
     if (err != ESP_OK) {
@@ -319,6 +356,10 @@ void WebServerManager::WsTelemetryTaskEntry(void* arg) {
 
 void WebServerManager::WsTelemetryTaskLoop() {
     while (true) {
+        if (!HasWsClients()) {
+            vTaskDelay(WS_IDLE_PERIOD_TICKS);
+            continue;
+        }
         BroadcastWebsocketMessage(BuildTelemetryEnvelopeJson("telemetry"));
         vTaskDelay(WS_TELEMETRY_PERIOD_TICKS);
     }
@@ -346,6 +387,20 @@ void WebServerManager::BroadcastWebsocketMessage(const std::string& payload) {
             RemoveWsClient(fd);
         }
     }
+}
+
+bool WebServerManager::HasWsClients() const {
+    if (wsClientsMutex == nullptr) {
+        return false;
+    }
+
+    bool hasClients = false;
+    if (xSemaphoreTake(wsClientsMutex, portMAX_DELAY) == pdTRUE) {
+        hasClients = !wsClients.empty();
+        xSemaphoreGive(wsClientsMutex);
+    }
+
+    return hasClients;
 }
 
 void WebServerManager::AddWsClient(int fd) {
@@ -441,13 +496,122 @@ esp_err_t WebServerManager::ReadRequestBody(httpd_req_t* req, std::string& outBo
     return ESP_OK;
 }
 
+esp_err_t WebServerManager::SendHistoryJson(httpd_req_t* req, const DataPointStorage& points) const {
+    if (req == nullptr) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
+    httpd_resp_set_status(req, "200 OK");
+
+    esp_err_t err = httpd_resp_send_chunk(req, "{\"ok\":true,\"data\":{\"points\":[", HTTPD_RESP_USE_STRLEN);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    for (std::size_t idx = 0; idx < points.size(); ++idx) {
+        if (idx > 0) {
+            err = httpd_resp_send_chunk(req, ",", 1);
+            if (err != ESP_OK) {
+                return err;
+            }
+        }
+
+        const DataPoint& point = points[idx];
+        char pointJson[512] = {};
+        const int written = std::snprintf(
+            pointJson,
+            sizeof(pointJson),
+            "{\"timestamp\":%llu,\"setpoint\":%.3f,\"process_value\":%.3f,\"pid_output\":%.3f,\"p\":%.3f,\"i\":%.3f,\"d\":%.3f,"
+            "\"temperatures\":[%.3f,%.3f,%.3f,%.3f],\"relay_states\":%u,\"servo_angle\":%u,\"running\":%s}",
+            static_cast<unsigned long long>(point.timestamp),
+            point.setPoint,
+            point.processValue,
+            point.PIDOutput,
+            point.PTerm,
+            point.ITerm,
+            point.DTerm,
+            point.temperatureReadings[0],
+            point.temperatureReadings[1],
+            point.temperatureReadings[2],
+            point.temperatureReadings[3],
+            static_cast<unsigned>(point.relayStates),
+            static_cast<unsigned>(point.servoAngle),
+            point.chamberRunning ? "true" : "false");
+        if (written <= 0 || static_cast<std::size_t>(written) >= sizeof(pointJson)) {
+            return ESP_FAIL;
+        }
+
+        err = httpd_resp_send_chunk(req, pointJson, static_cast<std::size_t>(written));
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    err = httpd_resp_send_chunk(req, "]}}", HTTPD_RESP_USE_STRLEN);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    return httpd_resp_send_chunk(req, nullptr, 0);
+}
+
+esp_err_t WebServerManager::SendHistoryCsv(httpd_req_t* req, const DataPointStorage& points) const {
+    if (req == nullptr) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    httpd_resp_set_type(req, "text/csv; charset=utf-8");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=history.csv");
+
+    esp_err_t err = httpd_resp_send_chunk(
+        req,
+        "timestamp,setpoint,process_value,pid_output,p_term,i_term,d_term,temp0,temp1,temp2,temp3,relay_states,servo_angle,running\n",
+        HTTPD_RESP_USE_STRLEN);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    for (const DataPoint& point : points) {
+        char line[320] = {};
+        const int written = std::snprintf(
+            line,
+            sizeof(line),
+            "%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%u,%u,%u\n",
+            static_cast<unsigned long long>(point.timestamp),
+            point.setPoint,
+            point.processValue,
+            point.PIDOutput,
+            point.PTerm,
+            point.ITerm,
+            point.DTerm,
+            point.temperatureReadings[0],
+            point.temperatureReadings[1],
+            point.temperatureReadings[2],
+            point.temperatureReadings[3],
+            static_cast<unsigned>(point.relayStates),
+            static_cast<unsigned>(point.servoAngle),
+            point.chamberRunning ? 1U : 0U);
+        if (written <= 0 || static_cast<std::size_t>(written) >= sizeof(line)) {
+            return ESP_FAIL;
+        }
+
+        err = httpd_resp_send_chunk(req, line, static_cast<std::size_t>(written));
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    return httpd_resp_send_chunk(req, nullptr, 0);
+}
+
 esp_err_t WebServerManager::SendJsonSuccess(httpd_req_t* req, const std::string& dataJson) const {
     if (req == nullptr) {
         return ESP_ERR_INVALID_ARG;
     }
 
     std::string body = "{\"ok\":true,\"data\":" + (dataJson.empty() ? "{}" : dataJson) + "}";
-    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
     httpd_resp_set_status(req, "200 OK");
     return httpd_resp_send(req, body.c_str(), body.size());
 }
@@ -470,7 +634,7 @@ esp_err_t WebServerManager::SendJsonError(httpd_req_t* req, int statusCode, cons
     cJSON_AddItemToObject(root, "error", errorObj);
 
     std::string payload = JsonStringFromObject(root);
-    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
     httpd_resp_set_status(req, status);
     return httpd_resp_send(req, payload.c_str(), payload.size());
 }
@@ -551,6 +715,26 @@ esp_err_t WebServerManager::HandleApiGet(httpd_req_t* req, const std::string& pa
         }
         cJSON_AddItemToObject(relaysObj, "pwm_relays", pwmRelays);
 
+        cJSON* pwmRelayWeights = cJSON_CreateArray();
+        const std::unordered_map<int, double> relayWeights = controller.GetRelaysPWMWeights();
+        std::vector<int> sortedRelays;
+        sortedRelays.reserve(relayWeights.size());
+        for (const auto& entry : relayWeights) {
+            sortedRelays.push_back(entry.first);
+        }
+        std::sort(sortedRelays.begin(), sortedRelays.end());
+        for (int relay : sortedRelays) {
+            auto it = relayWeights.find(relay);
+            if (it == relayWeights.end()) {
+                continue;
+            }
+            cJSON* item = cJSON_CreateObject();
+            cJSON_AddNumberToObject(item, "relay", relay);
+            cJSON_AddNumberToObject(item, "weight", it->second);
+            cJSON_AddItemToArray(pwmRelayWeights, item);
+        }
+        cJSON_AddItemToObject(relaysObj, "pwm_relay_weights", pwmRelayWeights);
+
         cJSON* runningRelays = cJSON_CreateArray();
         for (int relay : controller.GetRelaysWhenRunning()) {
             cJSON_AddItemToArray(runningRelays, cJSON_CreateNumber(relay));
@@ -617,64 +801,13 @@ esp_err_t WebServerManager::HandleApiGet(httpd_req_t* req, const std::string& pa
             }
         }
 
-        const std::vector<DataPoint> points = DataManager::getInstance().GetRecentData(limit);
-        cJSON* root = cJSON_CreateObject();
-        cJSON* arr = cJSON_CreateArray();
-        for (const DataPoint& point : points) {
-            cJSON* item = cJSON_CreateObject();
-            cJSON_AddNumberToObject(item, "timestamp", static_cast<double>(point.timestamp));
-            cJSON_AddNumberToObject(item, "setpoint", point.setPoint);
-            cJSON_AddNumberToObject(item, "process_value", point.processValue);
-            cJSON_AddNumberToObject(item, "pid_output", point.PIDOutput);
-            cJSON_AddNumberToObject(item, "p", point.PTerm);
-            cJSON_AddNumberToObject(item, "i", point.ITerm);
-            cJSON_AddNumberToObject(item, "d", point.DTerm);
-
-            cJSON* temps = cJSON_CreateArray();
-            for (int i = 0; i < 4; ++i) {
-                cJSON_AddItemToArray(temps, cJSON_CreateNumber(point.temperatureReadings[i]));
-            }
-            cJSON_AddItemToObject(item, "temperatures", temps);
-            cJSON_AddNumberToObject(item, "relay_states", point.relayStates);
-            cJSON_AddNumberToObject(item, "servo_angle", point.servoAngle);
-            cJSON_AddBoolToObject(item, "running", point.chamberRunning);
-            cJSON_AddItemToArray(arr, item);
-        }
-
-        cJSON_AddItemToObject(root, "points", arr);
-        return SendJsonSuccess(req, JsonStringFromObject(root));
+        const DataPointStorage points = DataManager::getInstance().GetRecentData(limit);
+        return SendHistoryJson(req, points);
     }
 
     if (path == "/api/v1/data/export.csv") {
-        const std::vector<DataPoint> points = DataManager::getInstance().GetAllData();
-        std::string csv = "timestamp,setpoint,process_value,pid_output,p_term,i_term,d_term,temp0,temp1,temp2,temp3,relay_states,servo_angle,running\n";
-        for (const DataPoint& point : points) {
-            char line[320] = {};
-            std::snprintf(
-                line,
-                sizeof(line),
-                "%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%u,%u,%u\n",
-                static_cast<unsigned long long>(point.timestamp),
-                point.setPoint,
-                point.processValue,
-                point.PIDOutput,
-                point.PTerm,
-                point.ITerm,
-                point.DTerm,
-                point.temperatureReadings[0],
-                point.temperatureReadings[1],
-                point.temperatureReadings[2],
-                point.temperatureReadings[3],
-                point.relayStates,
-                point.servoAngle,
-                point.chamberRunning ? 1 : 0
-            );
-            csv += line;
-        }
-
-        httpd_resp_set_type(req, "text/csv");
-        httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=history.csv");
-        return httpd_resp_send(req, csv.c_str(), csv.size());
+        const DataPointStorage points = DataManager::getInstance().GetAllData();
+        return SendHistoryCsv(req, points);
     }
 
     if (path == "/api/v1/system/info") {
@@ -871,6 +1004,7 @@ esp_err_t WebServerManager::HandleApiPut(httpd_req_t* req, const std::string& pa
     if (path == "/api/v1/controller/config/relays") {
         cJSON* pwmRelays = cJSON_GetObjectItem(json, "pwm_relays");
         cJSON* runningRelays = cJSON_GetObjectItem(json, "running_relays");
+        cJSON* pwmRelayWeights = cJSON_GetObjectItem(json, "pwm_relay_weights");
 
         std::vector<int> parsedPwm;
         std::vector<int> parsedRunning;
@@ -879,8 +1013,30 @@ esp_err_t WebServerManager::HandleApiPut(httpd_req_t* req, const std::string& pa
             return SendJsonError(req, 400, "BAD_RELAYS_ARGS", "pwm_relays and running_relays must be integer arrays");
         }
 
+        std::unordered_map<int, double> parsedWeights;
+        if (pwmRelayWeights != nullptr && !ParseRelayWeightArray(pwmRelayWeights, parsedWeights)) {
+            cJSON_Delete(json);
+            return SendJsonError(req, 400, "BAD_RELAYS_ARGS", "pwm_relay_weights must be an array of {relay, weight} entries with weight in [0,1]");
+        }
+
         Controller& controller = Controller::getInstance();
-        esp_err_t err = controller.SetRelayPWMEnabled(parsedPwm);
+        esp_err_t err = ESP_OK;
+        if (pwmRelayWeights != nullptr) {
+            std::unordered_map<int, double> mergedWeights;
+            for (int relay : parsedPwm) {
+                mergedWeights[relay] = 1.0;
+            }
+            for (const auto& entry : parsedWeights) {
+                if (mergedWeights.find(entry.first) == mergedWeights.end()) {
+                    cJSON_Delete(json);
+                    return SendJsonError(req, 400, "BAD_RELAYS_ARGS", "every pwm_relay_weights relay must also be listed in pwm_relays");
+                }
+                mergedWeights[entry.first] = entry.second;
+            }
+            err = controller.SetRelaysPWM(mergedWeights);
+        } else {
+            err = controller.SetRelayPWMEnabled(parsedPwm);
+        }
         if (err == ESP_OK) {
             err = controller.SetRelaysWhenRunning(parsedRunning);
         }

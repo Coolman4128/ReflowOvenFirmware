@@ -31,6 +31,7 @@ class Controller{
         double GetInputFilterTimeMs() const;
         std::vector<int> GetInputChannels() const;
         std::vector<int> GetRelaysPWMEnabled() const;
+        std::unordered_map<int, double> GetRelaysPWMWeights() const;
         std::vector<int> GetRelaysWhenRunning() const;
         PID* GetPIDController() { return &pidController; }
         std::string GetStateTUI() const;
@@ -51,6 +52,7 @@ class Controller{
         esp_err_t AddSetRelayPWM(int relayIndex, double pwmValue);
         esp_err_t RemoveRelayPWM(int relayIndex);
         esp_err_t SetRelayPWMEnabled(const std::vector<int>& relayIndices);
+        esp_err_t SetRelaysPWM(const std::unordered_map<int, double>& relayWeights);
         esp_err_t AddRelayWhenRunning(int relayIndex);
         esp_err_t RemoveRelayWhenRunning(int relayIndex);
         esp_err_t SetRelaysWhenRunning(const std::vector<int>& relayIndices);
@@ -65,6 +67,9 @@ class Controller{
         constexpr static double MIN_SETPOINT = 0.0; // Min temp in Celsius
         constexpr static double MIN_PROCESS_VALUE = -100.0; // Minimum process value (alarm will turn on if value is below this, to catch sensor errors)
         constexpr static double MAX_PROCESS_VALUE = 300.0; // Max temp in Celsius (alarm will turn on if value is above this, to catch sensor errors and prevent overheating)
+        constexpr static double ROOM_TEMPERATURE_C = 24.0;
+        constexpr static double MIN_DOOR_COOLING_EFFECTIVENESS = 0.45;
+        constexpr static double DOOR_COOLING_NONLINEARITY = 3.0;
         
         
         PID pidController; // The actual PID controller object that will do the calculations
@@ -85,6 +90,7 @@ class Controller{
         double inputFilterTimeMs = 100.0;
         std::vector<int> inputsBeingUsed = {0}; // Default to channel 0 only.
         std::unordered_map<int, double> relaysPWM = {{0, 1.0}, {1, 0.5}}; // Default to relay 0 at 100 strength, and relay 1 at 50% strength
+        std::unordered_map<int, double> relayPWMCycleAccumulators;
         std::vector<int> relaysWhenControllerRunning = {2}; // Default to turning on relay 2 when the controller is running, off otherwise
 
         mutable SemaphoreHandle_t stateMutex = nullptr;
@@ -104,6 +110,9 @@ class Controller{
         void ApplyInputsMask(uint8_t mask);
         void ApplyRelaysPWMMask(uint8_t mask);
         void ApplyRelaysOnMask(uint8_t mask);
+        void SyncRelayPWMAccumulatorsLocked();
+        esp_err_t PersistRelaysPWMSettings();
+        double ComputeCoolingDoorOpenFraction(double pidOutput, double processValueC) const;
 
 
         esp_err_t RunningRelaysOn();

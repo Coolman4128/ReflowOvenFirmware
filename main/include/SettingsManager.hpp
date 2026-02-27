@@ -3,6 +3,7 @@
 #include "esp_err.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include <array>
 #include <cstdint>
 #include <string>
 
@@ -40,6 +41,10 @@ class SettingsManager {
 
         uint8_t GetRelaysPWMMask() const { return relaysPWMMask; }
         esp_err_t SetRelaysPWMMask(uint8_t newValue);
+        std::array<double, 8> GetRelayPWMWeights() const { return relayPWMWeights; }
+        double GetRelayPWMWeight(int relayIndex) const;
+        esp_err_t SetRelayPWMWeight(int relayIndex, double newValue);
+        esp_err_t SetRelayPWMWeights(const std::array<double, 8>& newValues);
 
         uint8_t GetRelaysOnMask() const { return relaysOnMask; }
         esp_err_t SetRelaysOnMask(uint8_t newValue);
@@ -109,6 +114,7 @@ class SettingsManager {
         double derivativeFilterTime = 0.0;
         double setpointWeight = 0.5;
         uint8_t relaysPWMMask = 0x03;
+        std::array<double, 8> relayPWMWeights = {1.0, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
         uint8_t relaysOnMask = 0x04;
         std::string timeZone = "EST";
         std::string wifiSSID = "NETGEAR";

@@ -7,6 +7,7 @@ interface Props {
 }
 
 export function DashboardPage({ status, onSetpoint }: Props) {
+  const degC = '\u00B0C';
   const [setpointInput, setSetpointInput] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -39,17 +40,17 @@ export function DashboardPage({ status, onSetpoint }: Props) {
       <div className="grid two">
         <section className="card" style={{ background: 'linear-gradient(135deg,#ef4444,#b91c1c)', color: 'white' }}>
           <h3 className="section-title" style={{ color: 'white' }}>Current Temperature</h3>
-          <div className="kpi">{controller ? controller.process_value_c.toFixed(1) : '--'}°C</div>
+          <div className="kpi">{controller ? controller.process_value_c.toFixed(1) : '--'}{degC}</div>
           <p style={{ opacity: 0.9 }}>Average chamber process value</p>
         </section>
 
         <section className="card">
           <h3 className="section-title">Setpoint</h3>
-          <div className="kpi">{controller ? controller.setpoint_c.toFixed(1) : '--'}°C</div>
+          <div className="kpi">{controller ? controller.setpoint_c.toFixed(1) : '--'}{degC}</div>
           <div className="row">
             <input
               className="input"
-              placeholder="New setpoint °C"
+              placeholder={`New setpoint ${degC}`}
               value={setpointInput}
               onChange={(e) => setSetpointInput(e.target.value)}
             />
@@ -101,7 +102,7 @@ export function DashboardPage({ status, onSetpoint }: Props) {
           {(hardware?.temperatures_c ?? []).map((temp, idx) => (
             <div key={idx} className="row" style={{ justifyContent: 'space-between' }}>
               <span>TC{idx}</span>
-              <strong>{temp.toFixed(1)}°C</strong>
+              <strong>{temp.toFixed(1)}{degC}</strong>
             </div>
           ))}
         </div>

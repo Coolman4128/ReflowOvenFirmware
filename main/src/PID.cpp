@@ -16,21 +16,28 @@ esp_err_t PID::Reset() {
 double PID::Calculate(double setPoint, double processValue) {
     
     if (firstRun) {
-        previousError = setPoint - processValue;
+        const double error = setPoint - processValue;
+        const double errorWeighted = (setpointWeight * setPoint) - processValue;
+        previousError = error;
         previousPV = processValue;
-        previousOutput = previousError * Kp; // Proportional term on first run
+        previousP = Kp * errorWeighted;
+        previousI = 0.0;
+        previousD = 0.0;
+        previousOutput = std::clamp(previousP, OutputMin, OutputMax);
         firstRun = false;
         lastTimeUs = esp_timer_get_time();
-        return previousError * Kp; // Return proportional term on first run, as we don't have a valid derivative yet
+        return previousOutput; // First run has no valid derivative term yet
     }
 
-    double error = setPoint - processValue;
-    double errorWeighted = (setpointWeight * setPoint) - processValue;
-    double dt = (esp_timer_get_time() - lastTimeUs) / 1e6; // Convert microseconds to seconds
-    lastTimeUs = esp_timer_get_time();
+    const int64_t nowUs = esp_timer_get_time();
+    double dt = (nowUs - lastTimeUs) / 1e6; // Convert microseconds to seconds
+    lastTimeUs = nowUs;
     if (dt <= 0.0) {
         dt = 1e-6;
     }
+
+    const double error = setPoint - processValue;
+    const double errorWeighted = (setpointWeight * setPoint) - processValue;
 
     if (derivativeFilterTime > 0.0) {
         DerivativeFilterAlpha = dt / (derivativeFilterTime + dt);
@@ -38,30 +45,38 @@ double PID::Calculate(double setPoint, double processValue) {
         DerivativeFilterAlpha = 1.0;
     }
 
-    integral += error * dt;
-    double derivative = (processValue - previousPV) / dt;
+    const double derivative = (processValue - previousPV) / dt;
     previousPV = processValue;
 
     // Apply derivative filtering
     dFiltered = DerivativeFilterAlpha * derivative + (1 - DerivativeFilterAlpha) * dFiltered;
 
-    double outputNoI = Kp * errorWeighted + Kd * dFiltered;
-    double outputI = Ki * integral;
-    if ((outputI + outputNoI) > OutputMax) {
-        outputI = std::max(0.0, OutputMax - outputNoI); // Prevent integral windup
-        if (Ki != 0.0) {
-            integral = outputI / Ki; // Adjust integral to match the clamped output
-        }
+    const double pTerm = Kp * errorWeighted;
+    const double dTerm = Kd * dFiltered;
+    const double outputNoI = pTerm + dTerm;
+
+    // Conditional integration anti-windup:
+    // Integrate only if it helps move saturated output back toward the linear region.
+    const double integralCandidate = integral + error * dt;
+    const double outputICandidate = Ki * integralCandidate;
+    const double outputCandidate = outputNoI + outputICandidate;
+
+    const bool saturatingHigh = (outputCandidate > OutputMax);
+    const bool saturatingLow = (outputCandidate < OutputMin);
+    const bool drivesFurtherIntoHighSat = saturatingHigh && ((error * Ki) > 0.0);
+    const bool drivesFurtherIntoLowSat = saturatingLow && ((error * Ki) < 0.0);
+
+    if (!(drivesFurtherIntoHighSat || drivesFurtherIntoLowSat)) {
+        integral = integralCandidate;
     }
-    else if ((outputI + outputNoI) < OutputMin) {
-        outputI = std::min(0.0, OutputMin - outputNoI); // Prevent integral windup
-        if (Ki != 0.0) {
-            integral = outputI / Ki; // Adjust integral to match the clamped output
-        }
-    }
-    double output = outputNoI + outputI;
-    output = std::clamp(output, OutputMin, OutputMax);
+
+    const double iTerm = Ki * integral;
+    const double output = std::clamp(outputNoI + iTerm, OutputMin, OutputMax);
+
     previousError = error;
+    previousP = pTerm;
+    previousI = iTerm;
+    previousD = dTerm;
     previousOutput = output;
 
     return output;

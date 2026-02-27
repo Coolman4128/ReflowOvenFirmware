@@ -1,8 +1,20 @@
 #include "SettingsManager.hpp"
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
 SettingsManager* SettingsManager::instance = nullptr;
+
+namespace {
+bool BuildRelayWeightKey(int relayIndex, char* outKey, std::size_t outLen) {
+    if (outKey == nullptr || outLen < 6 || relayIndex < 0 || relayIndex > 7) {
+        return false;
+    }
+    std::snprintf(outKey, outLen, "relw%d", relayIndex);
+    return true;
+}
+}
 
 SettingsManager& SettingsManager::getInstance(){
     if (instance == nullptr){
@@ -175,6 +187,20 @@ esp_err_t SettingsManager::LoadSettings() {
         return err;
     }
 
+    for (int relayIndex = 0; relayIndex < 8; ++relayIndex) {
+        char key[16] = {};
+        if (!BuildRelayWeightKey(relayIndex, key, sizeof(key))) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        double value = relayPWMWeights[static_cast<std::size_t>(relayIndex)];
+        err = this->nvs_get_double(m_handle, key, &value);
+        if (err == ESP_OK) {
+            relayPWMWeights[static_cast<std::size_t>(relayIndex)] = std::clamp(value, 0.0, 1.0);
+        } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+            return err;
+        }
+    }
+
     err = nvs_get_u8(m_handle, KEY_RELAYS_ON, &relaysOnMask);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
         return err;
@@ -273,6 +299,38 @@ esp_err_t SettingsManager::SetRelaysPWMMask(uint8_t newValue) {
     return NVS_Set_U8(KEY_RELAYS_PWM, relaysPWMMask);
 }
 
+double SettingsManager::GetRelayPWMWeight(int relayIndex) const {
+    if (relayIndex < 0 || relayIndex > 7) {
+        return 1.0;
+    }
+    return relayPWMWeights[static_cast<std::size_t>(relayIndex)];
+}
+
+esp_err_t SettingsManager::SetRelayPWMWeight(int relayIndex, double newValue) {
+    if (relayIndex < 0 || relayIndex > 7 || newValue < 0.0 || newValue > 1.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    relayPWMWeights[static_cast<std::size_t>(relayIndex)] = std::clamp(newValue, 0.0, 1.0);
+
+    char key[16] = {};
+    if (!BuildRelayWeightKey(relayIndex, key, sizeof(key))) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return NVS_Set_Double(key, relayPWMWeights[static_cast<std::size_t>(relayIndex)]);
+}
+
+esp_err_t SettingsManager::SetRelayPWMWeights(const std::array<double, 8>& newValues) {
+    for (int relayIndex = 0; relayIndex < 8; ++relayIndex) {
+        esp_err_t err = SetRelayPWMWeight(relayIndex, newValues[static_cast<std::size_t>(relayIndex)]);
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+    return ESP_OK;
+}
+
 esp_err_t SettingsManager::SetRelaysOnMask(uint8_t newValue) {
     relaysOnMask = newValue;
     return NVS_Set_U8(KEY_RELAYS_ON, relaysOnMask);
@@ -302,5 +360,3 @@ esp_err_t SettingsManager::SetMaxDataLogTimeMs(int32_t newValue) {
     maxDataLogTimeMs = newValue;
     return NVS_Set_I32(KEY_MAX_DATA_LOG_TIME, maxDataLogTimeMs);
 }
-
-

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DataManager.hpp"
 #include "esp_err.h"
 #include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
@@ -51,6 +52,8 @@ private:
     std::string GetRequestPath(httpd_req_t* req) const;
     std::string GetRequestQuery(httpd_req_t* req) const;
     esp_err_t ReadRequestBody(httpd_req_t* req, std::string& outBody) const;
+    esp_err_t SendHistoryJson(httpd_req_t* req, const DataPointStorage& points) const;
+    esp_err_t SendHistoryCsv(httpd_req_t* req, const DataPointStorage& points) const;
 
     esp_err_t SendJsonSuccess(httpd_req_t* req, const std::string& dataJson) const;
     esp_err_t SendJsonError(httpd_req_t* req, int statusCode, const char* code, const char* message) const;
@@ -65,6 +68,7 @@ private:
     static void WsTelemetryTaskEntry(void* arg);
     void WsTelemetryTaskLoop();
     void BroadcastWebsocketMessage(const std::string& payload);
+    bool HasWsClients() const;
     void AddWsClient(int fd);
     void RemoveWsClient(int fd);
 };

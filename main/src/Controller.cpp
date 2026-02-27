@@ -3,6 +3,8 @@
 #include "HardwareManager.hpp"
 #include "SettingsManager.hpp"
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdio>
 
 Controller* Controller::instance = nullptr;
@@ -55,6 +57,13 @@ Controller::Controller()
     (void)pidController.SetSetpointWeight(settings.GetSetpointWeight());
     ApplyInputsMask(settings.GetInputsIncludedMask());
     ApplyRelaysPWMMask(settings.GetRelaysPWMMask());
+    const std::array<double, 8> relayWeights = settings.GetRelayPWMWeights();
+    for (auto& entry : relaysPWM) {
+        if (entry.first >= 0 && entry.first < 8) {
+            entry.second = std::clamp(relayWeights[static_cast<std::size_t>(entry.first)], 0.0, 1.0);
+        }
+    }
+    SyncRelayPWMAccumulatorsLocked();
     ApplyRelaysOnMask(settings.GetRelaysOnMask());
 }
 
@@ -108,12 +117,17 @@ std::vector<int> Controller::GetRelaysPWMEnabled() const {
     std::vector<int> relays;
     relays.reserve(relaysPWM.size());
     for (const auto& entry : relaysPWM) {
-        if (entry.second > 0.0) {
+        if (entry.first >= 0 && entry.first <= 7) {
             relays.push_back(entry.first);
         }
     }
     std::sort(relays.begin(), relays.end());
     return relays;
+}
+
+std::unordered_map<int, double> Controller::GetRelaysPWMWeights() const {
+    ScopedLock lock(stateMutex);
+    return relaysPWM;
 }
 
 std::vector<int> Controller::GetRelaysWhenRunning() const {
@@ -490,14 +504,18 @@ esp_err_t Controller::PerformOnRunning() {
     }
 
     if (output < 0) {
-        double angleFromPercent = 180 * std::min(-output / 100, 1.0);
+        const double doorOpenFraction = ComputeCoolingDoorOpenFraction(output, processValueCopy);
+        const double angleFromPercent = 180.0 * doorOpenFraction;
         HardwareManager::getInstance().setServoAngle(angleFromPercent);
+        relayPWM.SetDutyCycle(0.0f);
+        (void)relayPWM.ForceOff();
     } else if (output > 0) {
         double pwmValue = std::min(output / 100, 1.0);
         relayPWM.SetDutyCycle(static_cast<float>(pwmValue));
         HardwareManager::getInstance().setServoAngle(0);
     } else {
         relayPWM.SetDutyCycle(0);
+        (void)relayPWM.ForceOff();
         HardwareManager::getInstance().setServoAngle(0);
     }
 
@@ -628,28 +646,50 @@ void Controller::RelayOffThunk(void* ctx) {
 }
 
 void Controller::RelayOn() {
-    std::unordered_map<int, double> relays;
+    std::vector<std::pair<int, bool>> nextStates;
     {
         ScopedLock lock(stateMutex);
-        relays = relaysPWM;
+        SyncRelayPWMAccumulatorsLocked();
+        nextStates.reserve(relaysPWM.size());
+        for (const auto& entry : relaysPWM) {
+            const int relayIndex = entry.first;
+            const double weight = std::clamp(entry.second, 0.0, 1.0);
+            bool relayOn = false;
+
+            if (weight >= 1.0) {
+                relayOn = true;
+            } else if (weight > 0.0) {
+                double& accumulator = relayPWMCycleAccumulators[relayIndex];
+                accumulator += weight;
+                if (accumulator >= 1.0) {
+                    relayOn = true;
+                    while (accumulator >= 1.0) {
+                        accumulator -= 1.0;
+                    }
+                }
+            }
+
+            nextStates.emplace_back(relayIndex, relayOn);
+        }
     }
 
-    for (const auto& entry : relays) {
-        if (entry.second > 0) {
-            HardwareManager::getInstance().setRelayState(entry.first, true);
-        }
+    for (const auto& entry : nextStates) {
+        HardwareManager::getInstance().setRelayState(entry.first, entry.second);
     }
 }
 
 void Controller::RelayOff() {
-    std::unordered_map<int, double> relays;
+    std::vector<int> relays;
     {
         ScopedLock lock(stateMutex);
-        relays = relaysPWM;
+        relays.reserve(relaysPWM.size());
+        for (const auto& entry : relaysPWM) {
+            relays.push_back(entry.first);
+        }
     }
 
-    for (const auto& entry : relays) {
-        HardwareManager::getInstance().setRelayState(entry.first, false);
+    for (int relayIndex : relays) {
+        HardwareManager::getInstance().setRelayState(relayIndex, false);
     }
 }
 
@@ -658,16 +698,17 @@ esp_err_t Controller::AddSetRelayPWM(int relayIndex, double pwmValue) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (pwmValue <= 0.0) {
-        return RemoveRelayPWM(relayIndex);
+    if (pwmValue < 0.0 || pwmValue > 1.0) {
+        return ESP_ERR_INVALID_ARG;
     }
 
     {
         ScopedLock lock(stateMutex);
-        relaysPWM[relayIndex] = pwmValue;
+        relaysPWM[relayIndex] = std::clamp(pwmValue, 0.0, 1.0);
+        SyncRelayPWMAccumulatorsLocked();
     }
 
-    return SettingsManager::getInstance().SetRelaysPWMMask(BuildRelaysPWMMask());
+    return PersistRelaysPWMSettings();
 }
 
 esp_err_t Controller::RemoveRelayPWM(int relayIndex) {
@@ -678,12 +719,10 @@ esp_err_t Controller::RemoveRelayPWM(int relayIndex) {
             return ESP_ERR_INVALID_ARG;
         }
         relaysPWM.erase(it);
-        if (relaysPWM.empty()) {
-            relaysPWM[0] = 1.0;
-        }
+        SyncRelayPWMAccumulatorsLocked();
     }
 
-    return SettingsManager::getInstance().SetRelaysPWMMask(BuildRelaysPWMMask());
+    return PersistRelaysPWMSettings();
 }
 
 esp_err_t Controller::SetRelayPWMEnabled(const std::vector<int>& relayIndices) {
@@ -697,10 +736,39 @@ esp_err_t Controller::SetRelayPWMEnabled(const std::vector<int>& relayIndices) {
 
     {
         ScopedLock lock(stateMutex);
+        for (auto& entry : nextMap) {
+            auto existing = relaysPWM.find(entry.first);
+            if (existing != relaysPWM.end()) {
+                entry.second = std::clamp(existing->second, 0.0, 1.0);
+            }
+        }
         relaysPWM = nextMap;
+        SyncRelayPWMAccumulatorsLocked();
     }
 
-    return SettingsManager::getInstance().SetRelaysPWMMask(BuildRelaysPWMMask());
+    return PersistRelaysPWMSettings();
+}
+
+esp_err_t Controller::SetRelaysPWM(const std::unordered_map<int, double>& relayWeights) {
+    std::unordered_map<int, double> sanitized;
+    sanitized.reserve(relayWeights.size());
+    for (const auto& entry : relayWeights) {
+        if (entry.first < 0 || entry.first > 7) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (entry.second < 0.0 || entry.second > 1.0) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        sanitized[entry.first] = std::clamp(entry.second, 0.0, 1.0);
+    }
+
+    {
+        ScopedLock lock(stateMutex);
+        relaysPWM = sanitized;
+        SyncRelayPWMAccumulatorsLocked();
+    }
+
+    return PersistRelaysPWMSettings();
 }
 
 esp_err_t Controller::AddRelayWhenRunning(int relayIndex) {
@@ -767,7 +835,7 @@ uint8_t Controller::BuildRelaysPWMMask() const {
     uint8_t mask = 0;
     ScopedLock lock(stateMutex);
     for (const auto& entry : relaysPWM) {
-        if (entry.first >= 0 && entry.first <= 7 && entry.second > 0) {
+        if (entry.first >= 0 && entry.first <= 7) {
             mask |= static_cast<uint8_t>(1u << entry.first);
         }
     }
@@ -804,9 +872,7 @@ void Controller::ApplyRelaysPWMMask(uint8_t mask) {
             relaysPWM[relayIndex] = 1.0;
         }
     }
-    if (relaysPWM.empty()) {
-        relaysPWM[0] = 1.0;
-    }
+    SyncRelayPWMAccumulatorsLocked();
 }
 
 void Controller::ApplyRelaysOnMask(uint8_t mask) {
@@ -816,4 +882,59 @@ void Controller::ApplyRelaysOnMask(uint8_t mask) {
             relaysWhenControllerRunning.push_back(relayIndex);
         }
     }
+}
+
+void Controller::SyncRelayPWMAccumulatorsLocked() {
+    for (auto it = relayPWMCycleAccumulators.begin(); it != relayPWMCycleAccumulators.end();) {
+        if (relaysPWM.find(it->first) == relaysPWM.end()) {
+            it = relayPWMCycleAccumulators.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (const auto& entry : relaysPWM) {
+        if (relayPWMCycleAccumulators.find(entry.first) == relayPWMCycleAccumulators.end()) {
+            relayPWMCycleAccumulators[entry.first] = 0.0;
+        }
+    }
+}
+
+esp_err_t Controller::PersistRelaysPWMSettings() {
+    SettingsManager& settings = SettingsManager::getInstance();
+    uint8_t mask = 0;
+    std::array<double, 8> weights = settings.GetRelayPWMWeights();
+
+    {
+        ScopedLock lock(stateMutex);
+        for (const auto& entry : relaysPWM) {
+            if (entry.first >= 0 && entry.first <= 7) {
+                mask |= static_cast<uint8_t>(1u << entry.first);
+                weights[static_cast<std::size_t>(entry.first)] = std::clamp(entry.second, 0.0, 1.0);
+            }
+        }
+    }
+    esp_err_t err = settings.SetRelaysPWMMask(mask);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return settings.SetRelayPWMWeights(weights);
+}
+
+double Controller::ComputeCoolingDoorOpenFraction(double pidOutput, double processValueC) const {
+    if (pidOutput >= 0.0) {
+        return 0.0;
+    }
+
+    const double coolingDemand = std::clamp(-pidOutput / 100.0, 0.0, 1.0);
+    const double tempRange = std::max(MAX_PROCESS_VALUE - ROOM_TEMPERATURE_C, 1.0);
+    const double normalizedTemp = std::clamp((processValueC - ROOM_TEMPERATURE_C) / tempRange, 0.0, 1.0);
+
+    const double tempEffectiveness = MIN_DOOR_COOLING_EFFECTIVENESS +
+        (1.0 - MIN_DOOR_COOLING_EFFECTIVENESS) * normalizedTemp;
+    const double compensatedDemand = std::clamp(coolingDemand / std::max(tempEffectiveness, 0.05), 0.0, 1.0);
+
+    // Door cooling is strongly nonlinear: small openings provide most of the effect.
+    const double doorOpenFraction = 1.0 - std::pow(1.0 - compensatedDemand, 1.0 / DOOR_COOLING_NONLINEARITY);
+    return std::clamp(doorOpenFraction, 0.0, 1.0);
 }

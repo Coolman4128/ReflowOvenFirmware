@@ -31,6 +31,7 @@ const state = {
   inputFilterMs: 1000,
   inputs: [0],
   pwmRelays: [0, 1],
+  pwmRelayWeights: { 0: 1, 1: 0.5 },
   runningRelays: [2],
   points: []
 };
@@ -225,7 +226,14 @@ const server = http.createServer(async (req, res) => {
       },
       input_filter_ms: state.inputFilterMs,
       inputs: state.inputs,
-      relays: { pwm_relays: state.pwmRelays, running_relays: state.runningRelays }
+      relays: {
+        pwm_relays: state.pwmRelays,
+        pwm_relay_weights: state.pwmRelays.map((relay) => ({
+          relay,
+          weight: Number(state.pwmRelayWeights[relay] ?? 1)
+        })),
+        running_relays: state.runningRelays
+      }
     }));
     return;
   }
@@ -258,6 +266,17 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'PUT' && path === '/api/v1/controller/config/relays') {
     const body = JSON.parse(await readBody(req));
     state.pwmRelays = Array.isArray(body.pwm_relays) ? body.pwm_relays.map((v) => Number(v)) : state.pwmRelays;
+    if (Array.isArray(body.pwm_relay_weights)) {
+      const nextWeights = {};
+      for (const entry of body.pwm_relay_weights) {
+        const relay = Number(entry?.relay);
+        const weight = Number(entry?.weight);
+        if (Number.isFinite(relay) && relay >= 0 && relay <= 7 && Number.isFinite(weight) && weight >= 0 && weight <= 1) {
+          nextWeights[relay] = weight;
+        }
+      }
+      state.pwmRelayWeights = nextWeights;
+    }
     state.runningRelays = Array.isArray(body.running_relays) ? body.running_relays.map((v) => Number(v)) : state.runningRelays;
     json(res, 200, envelope({}));
     return;

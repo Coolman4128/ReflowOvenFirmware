@@ -35,7 +35,9 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ setpoint_c })
   }),
-  getHistory: (limit = 500) => request<{ points: HistoryPoint[] }>(`/api/v1/data/history?limit=${limit}`),
+  getHistory: (limit?: number) => request<{ points: HistoryPoint[] }>(
+    typeof limit === 'number' ? `/api/v1/data/history?limit=${limit}` : '/api/v1/data/history'
+  ),
   clearHistory: () => request<{}>('/api/v1/data/history', { method: 'DELETE' }),
   exportCsv: () => request<string>('/api/v1/data/export.csv'),
   getTimeSettings: () => request<{ timezone: string; synced: boolean; unix_time_ms: number }>('/api/v1/settings/time'),
@@ -68,9 +70,13 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify({ channels })
   }),
-  updateRelays: (pwm_relays: number[], running_relays: number[]) => request<{}>('/api/v1/controller/config/relays', {
+  updateRelays: (
+    pwm_relays: number[],
+    running_relays: number[],
+    pwm_relay_weights: Array<{ relay: number; weight: number }>
+  ) => request<{}>('/api/v1/controller/config/relays', {
     method: 'PUT',
-    body: JSON.stringify({ pwm_relays, running_relays })
+    body: JSON.stringify({ pwm_relays, running_relays, pwm_relay_weights })
   }),
   getProfiles: () => request<{ supports_execution: boolean; profiles: Array<{ id: string; name: string; description: string }> }>('/api/v1/profiles')
 };
