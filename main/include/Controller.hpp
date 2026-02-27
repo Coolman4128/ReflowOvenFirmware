@@ -44,6 +44,7 @@ class Controller{
         esp_err_t SetInputFilterTime(double newFilterTimeMs);
         esp_err_t SetPIDGains(double newKp, double newKi, double newKd);
         esp_err_t SetDerivativeFilterTime(double newFilterTimeSeconds);
+        esp_err_t SetSetpointWeight(double newWeight);
         esp_err_t AddInputChannel(int channel);
         esp_err_t RemoveInputChannel(int channel);
         esp_err_t SetInputChannels(const std::vector<int>& channels);

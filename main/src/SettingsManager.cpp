@@ -165,6 +165,11 @@ esp_err_t SettingsManager::LoadSettings() {
         return err;
     }
 
+    err = this->nvs_get_double(m_handle, KEY_SETPOINT_WEIGHT, &setpointWeight);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
     err = nvs_get_u8(m_handle, KEY_RELAYS_PWM, &relaysPWMMask);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
         return err;
@@ -256,6 +261,11 @@ esp_err_t SettingsManager::SetDerivativeGain(double newValue) {
 esp_err_t SettingsManager::SetDerivativeFilterTime(double newValue) {
     derivativeFilterTime = newValue;
     return NVS_Set_Double(KEY_DERIV_FILTER_TIME, derivativeFilterTime);
+}
+
+esp_err_t SettingsManager::SetSetpointWeight(double newValue) {
+    setpointWeight = newValue;
+    return NVS_Set_Double(KEY_SETPOINT_WEIGHT, setpointWeight);
 }
 
 esp_err_t SettingsManager::SetRelaysPWMMask(uint8_t newValue) {

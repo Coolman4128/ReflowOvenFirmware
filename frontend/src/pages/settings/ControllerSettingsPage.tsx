@@ -21,7 +21,13 @@ export function ControllerSettingsPage({ onBack }: Props) {
 
   const refresh = async () => {
     const value = await api.getControllerConfig();
-    setConfig(value);
+    setConfig({
+      ...value,
+      pid: {
+        ...value.pid,
+        setpoint_weight: Number.isFinite(value.pid.setpoint_weight) ? value.pid.setpoint_weight : 0.5
+      }
+    });
     setInputsCsv(value.inputs.join(','));
     setPwmRelaysCsv(value.relays.pwm_relays.join(','));
     setRunningRelaysCsv(value.relays.running_relays.join(','));
@@ -82,6 +88,18 @@ export function ControllerSettingsPage({ onBack }: Props) {
           <div>
             <label className="label">Derivative Filter (s)</label>
             <input className="input" type="number" value={config.pid.derivative_filter_s} onChange={(e) => setConfig({ ...config, pid: { ...config.pid, derivative_filter_s: Number(e.target.value) } })} />
+          </div>
+          <div>
+            <label className="label">Setpoint Weight (0-1)</label>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              value={config.pid.setpoint_weight}
+              onChange={(e) => setConfig({ ...config, pid: { ...config.pid, setpoint_weight: Number(e.target.value) } })}
+            />
           </div>
         </div>
         <button className="primary" style={{ marginTop: '0.75rem' }} onClick={savePid}>Save PID</button>

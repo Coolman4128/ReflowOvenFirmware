@@ -52,6 +52,7 @@ Controller::Controller()
     inputFilterTimeMs = settings.GetInputFilterTime();
     (void)pidController.Tune(settings.GetProportionalGain(), settings.GetIntegralGain(), settings.GetDerivativeGain());
     (void)pidController.SetDerivativeFilterTime(settings.GetDerivativeFilterTime());
+    (void)pidController.SetSetpointWeight(settings.GetSetpointWeight());
     ApplyInputsMask(settings.GetInputsIncludedMask());
     ApplyRelaysPWMMask(settings.GetRelaysPWMMask());
     ApplyRelaysOnMask(settings.GetRelaysOnMask());
@@ -268,6 +269,15 @@ esp_err_t Controller::SetDerivativeFilterTime(double newFilterTimeSeconds) {
     }
 
     return SettingsManager::getInstance().SetDerivativeFilterTime(newFilterTimeSeconds);
+}
+
+esp_err_t Controller::SetSetpointWeight(double newWeight) {
+    esp_err_t err = pidController.SetSetpointWeight(newWeight);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    return SettingsManager::getInstance().SetSetpointWeight(newWeight);
 }
 
 esp_err_t Controller::AddInputChannel(int channel) {

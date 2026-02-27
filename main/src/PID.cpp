@@ -25,6 +25,7 @@ double PID::Calculate(double setPoint, double processValue) {
     }
 
     double error = setPoint - processValue;
+    double errorWeighted = (setpointWeight * setPoint) - processValue;
     double dt = (esp_timer_get_time() - lastTimeUs) / 1e6; // Convert microseconds to seconds
     lastTimeUs = esp_timer_get_time();
     if (dt <= 0.0) {
@@ -44,7 +45,7 @@ double PID::Calculate(double setPoint, double processValue) {
     // Apply derivative filtering
     dFiltered = DerivativeFilterAlpha * derivative + (1 - DerivativeFilterAlpha) * dFiltered;
 
-    double outputNoI = Kp * error + Kd * dFiltered;
+    double outputNoI = Kp * errorWeighted + Kd * dFiltered;
     double outputI = Ki * integral;
     if ((outputI + outputNoI) > OutputMax) {
         outputI = std::max(0.0, OutputMax - outputNoI); // Prevent integral windup
@@ -87,5 +88,13 @@ esp_err_t PID::SetDerivativeFilterTime(double filterTimeSeconds) {
         return ESP_ERR_INVALID_ARG;
     }
     derivativeFilterTime = filterTimeSeconds;
+    return ESP_OK;
+}
+
+esp_err_t PID::SetSetpointWeight(double weight) {
+    if (weight < 0.0 || weight > 1.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    setpointWeight = weight;
     return ESP_OK;
 }

@@ -14,9 +14,11 @@ class PID{
         double GetKi() const { return Ki; }
         double GetKd() const { return Kd; }
         double GetDerivativeFilterTime() const { return derivativeFilterTime; }
+        double GetSetpointWeight() const { return setpointWeight; }
         esp_err_t Tune(double Kp, double Ki, double Kd);
         esp_err_t SetDerivativeFilterAlpha(double alpha);
         esp_err_t SetDerivativeFilterTime(double filterTimeSeconds);
+        esp_err_t SetSetpointWeight(double weight);
         esp_err_t Reset();
 
     private:
@@ -25,6 +27,7 @@ class PID{
         double Kd = 0.0;
         double OutputMin = -100.0;
         double OutputMax = 100.0;
+        double setpointWeight = 0.5; // Weight for the setpoint in the error calculation, between 0 and 1
 
         double DerivativeFilterAlpha = 1; // Smoothing factor for derivative term
         double derivativeFilterTime = 0.0; // Time constant in seconds

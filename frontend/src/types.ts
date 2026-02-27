@@ -79,6 +79,7 @@ export interface ControllerConfig {
     ki: number;
     kd: number;
     derivative_filter_s: number;
+    setpoint_weight: number;
   };
   input_filter_ms: number;
   inputs: number[];

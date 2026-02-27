@@ -35,6 +35,9 @@ class SettingsManager {
         double GetDerivativeFilterTime() const { return derivativeFilterTime; }
         esp_err_t SetDerivativeFilterTime(double newValue);
 
+        double GetSetpointWeight() const { return setpointWeight; }
+        esp_err_t SetSetpointWeight(double newValue);
+
         uint8_t GetRelaysPWMMask() const { return relaysPWMMask; }
         esp_err_t SetRelaysPWMMask(uint8_t newValue);
 
@@ -89,6 +92,7 @@ class SettingsManager {
         constexpr static const char* KEY_INTEGRAL_GAIN = "int_gain";
         constexpr static const char* KEY_DERIVATIVE_GAIN = "der_gain";
         constexpr static const char* KEY_DERIV_FILTER_TIME = "der_filt_t";
+        constexpr static const char* KEY_SETPOINT_WEIGHT = "sp_weight";
         constexpr static const char* KEY_RELAYS_PWM = "rel_pwm";
         constexpr static const char* KEY_RELAYS_ON = "rel_on";
         constexpr static const char* KEY_TIMEZONE = "timezone";
@@ -103,6 +107,7 @@ class SettingsManager {
         double integralGain = 2.0;
         double derivativeGain = 0.0;
         double derivativeFilterTime = 0.0;
+        double setpointWeight = 0.5;
         uint8_t relaysPWMMask = 0x03;
         uint8_t relaysOnMask = 0x04;
         std::string timeZone = "EST";

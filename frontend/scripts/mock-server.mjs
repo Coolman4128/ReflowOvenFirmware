@@ -23,6 +23,15 @@ const state = {
   wifiSsid: 'ReflowLab',
   wifiIp: '192.168.1.88',
   wifiRssi: -52,
+  pidKp: 15,
+  pidKi: 2,
+  pidKd: 0,
+  pidDerivativeFilterS: 0,
+  pidSetpointWeight: 0.5,
+  inputFilterMs: 1000,
+  inputs: [0],
+  pwmRelays: [0, 1],
+  runningRelays: [2],
   points: []
 };
 
@@ -207,15 +216,49 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && path === '/api/v1/controller/config') {
     json(res, 200, envelope({
-      pid: { kp: 15, ki: 2, kd: 0, derivative_filter_s: 0 },
-      input_filter_ms: 1000,
-      inputs: [0],
-      relays: { pwm_relays: [0, 1], running_relays: [2] }
+      pid: {
+        kp: state.pidKp,
+        ki: state.pidKi,
+        kd: state.pidKd,
+        derivative_filter_s: state.pidDerivativeFilterS,
+        setpoint_weight: state.pidSetpointWeight
+      },
+      input_filter_ms: state.inputFilterMs,
+      inputs: state.inputs,
+      relays: { pwm_relays: state.pwmRelays, running_relays: state.runningRelays }
     }));
     return;
   }
 
-  if (req.method === 'PUT' && path.startsWith('/api/v1/controller/config/')) {
+  if (req.method === 'PUT' && path === '/api/v1/controller/config/pid') {
+    const body = JSON.parse(await readBody(req));
+    state.pidKp = Number(body.kp ?? state.pidKp);
+    state.pidKi = Number(body.ki ?? state.pidKi);
+    state.pidKd = Number(body.kd ?? state.pidKd);
+    state.pidDerivativeFilterS = Number(body.derivative_filter_s ?? state.pidDerivativeFilterS);
+    state.pidSetpointWeight = Number(body.setpoint_weight ?? state.pidSetpointWeight);
+    json(res, 200, envelope({}));
+    return;
+  }
+
+  if (req.method === 'PUT' && path === '/api/v1/controller/config/filter') {
+    const body = JSON.parse(await readBody(req));
+    state.inputFilterMs = Number(body.input_filter_ms ?? state.inputFilterMs);
+    json(res, 200, envelope({}));
+    return;
+  }
+
+  if (req.method === 'PUT' && path === '/api/v1/controller/config/inputs') {
+    const body = JSON.parse(await readBody(req));
+    state.inputs = Array.isArray(body.channels) ? body.channels.map((v) => Number(v)) : state.inputs;
+    json(res, 200, envelope({}));
+    return;
+  }
+
+  if (req.method === 'PUT' && path === '/api/v1/controller/config/relays') {
+    const body = JSON.parse(await readBody(req));
+    state.pwmRelays = Array.isArray(body.pwm_relays) ? body.pwm_relays.map((v) => Number(v)) : state.pwmRelays;
+    state.runningRelays = Array.isArray(body.running_relays) ? body.running_relays.map((v) => Number(v)) : state.runningRelays;
     json(res, 200, envelope({}));
     return;
   }

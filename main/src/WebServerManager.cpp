@@ -533,6 +533,7 @@ esp_err_t WebServerManager::HandleApiGet(httpd_req_t* req, const std::string& pa
         cJSON_AddNumberToObject(pidObj, "ki", pid->GetKi());
         cJSON_AddNumberToObject(pidObj, "kd", pid->GetKd());
         cJSON_AddNumberToObject(pidObj, "derivative_filter_s", pid->GetDerivativeFilterTime());
+        cJSON_AddNumberToObject(pidObj, "setpoint_weight", pid->GetSetpointWeight());
         cJSON_AddItemToObject(root, "pid", pidObj);
 
         cJSON_AddNumberToObject(root, "input_filter_ms", controller.GetInputFilterTimeMs());
@@ -809,16 +810,21 @@ esp_err_t WebServerManager::HandleApiPut(httpd_req_t* req, const std::string& pa
         cJSON* ki = cJSON_GetObjectItem(json, "ki");
         cJSON* kd = cJSON_GetObjectItem(json, "kd");
         cJSON* derivativeFilter = cJSON_GetObjectItem(json, "derivative_filter_s");
+        cJSON* setpointWeight = cJSON_GetObjectItem(json, "setpoint_weight");
 
-        if (!cJSON_IsNumber(kp) || !cJSON_IsNumber(ki) || !cJSON_IsNumber(kd) || !cJSON_IsNumber(derivativeFilter)) {
+        if (!cJSON_IsNumber(kp) || !cJSON_IsNumber(ki) || !cJSON_IsNumber(kd) || !cJSON_IsNumber(derivativeFilter) ||
+            (setpointWeight != nullptr && !cJSON_IsNumber(setpointWeight))) {
             cJSON_Delete(json);
-            return SendJsonError(req, 400, "BAD_PID_ARGS", "kp, ki, kd, derivative_filter_s are required numeric fields");
+            return SendJsonError(req, 400, "BAD_PID_ARGS", "kp, ki, kd, derivative_filter_s are required numeric fields. setpoint_weight must be numeric if provided");
         }
 
         Controller& controller = Controller::getInstance();
         esp_err_t err = controller.SetPIDGains(kp->valuedouble, ki->valuedouble, kd->valuedouble);
         if (err == ESP_OK) {
             err = controller.SetDerivativeFilterTime(derivativeFilter->valuedouble);
+        }
+        if (err == ESP_OK && setpointWeight != nullptr) {
+            err = controller.SetSetpointWeight(setpointWeight->valuedouble);
         }
 
         cJSON_Delete(json);

@@ -56,7 +56,7 @@ export const api = {
     body: JSON.stringify(payload)
   }),
   getControllerConfig: () => request<ControllerConfig>('/api/v1/controller/config'),
-  updatePid: (payload: { kp: number; ki: number; kd: number; derivative_filter_s: number }) => request<{}>('/api/v1/controller/config/pid', {
+  updatePid: (payload: { kp: number; ki: number; kd: number; derivative_filter_s: number; setpoint_weight: number }) => request<{}>('/api/v1/controller/config/pid', {
     method: 'PUT',
     body: JSON.stringify(payload)
   }),
