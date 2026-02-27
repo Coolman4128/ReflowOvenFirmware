@@ -28,5 +28,19 @@ idf_component_register(
         app_update
 )
 
-set(WEBUI_DIST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/webui")
-spiffs_create_partition_image(spiffs "${WEBUI_DIST_DIR}" FLASH_IN_PROJECT)
+set(WEBUI_FIRMWARE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/webui")
+set(WEBUI_FRONTEND_DIST_DIR "${CMAKE_SOURCE_DIR}/frontend/dist")
+
+if(EXISTS "${WEBUI_FIRMWARE_DIR}")
+    set(WEBUI_ASSETS_DIR "${WEBUI_FIRMWARE_DIR}")
+elseif(EXISTS "${WEBUI_FRONTEND_DIST_DIR}")
+    message(STATUS "Using frontend/dist as SPIFFS source (main/webui not found)")
+    set(WEBUI_ASSETS_DIR "${WEBUI_FRONTEND_DIST_DIR}")
+else()
+    message(FATAL_ERROR
+        "Web UI assets not found. Run:\n"
+        "  cd frontend && npm ci && npm run build:firmware\n"
+        "or generate frontend/dist before building firmware.")
+endif()
+
+spiffs_create_partition_image(spiffs "${WEBUI_ASSETS_DIR}" FLASH_IN_PROJECT)

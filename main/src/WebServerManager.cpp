@@ -67,7 +67,7 @@ bool ParseIntArray(cJSON* arr, std::vector<int>& out) {
     return true;
 }
 
-std::string ContentTypeForPath(const std::string& path) {
+const char* ContentTypeForPath(const std::string& path) {
     if (path.size() >= 5 && path.substr(path.size() - 5) == ".html") return "text/html";
     if (path.size() >= 4 && path.substr(path.size() - 4) == ".css") return "text/css";
     if (path.size() >= 3 && path.substr(path.size() - 3) == ".js") return "application/javascript";
@@ -1036,7 +1036,7 @@ esp_err_t WebServerManager::HandleStaticFileRequest(httpd_req_t* req) {
         return SendJsonError(req, 500, "FILE_OPEN_FAILED", "Failed to open static file");
     }
 
-    httpd_resp_set_type(req, ContentTypeForPath(filePath).c_str());
+    httpd_resp_set_type(req, ContentTypeForPath(filePath));
     char buffer[1024] = {};
     while (!std::feof(file)) {
         const std::size_t read = std::fread(buffer, 1, sizeof(buffer), file);

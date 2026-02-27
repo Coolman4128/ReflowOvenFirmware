@@ -111,8 +111,8 @@ class SettingsManager {
         uint8_t relaysPWMMask = 0x03;
         uint8_t relaysOnMask = 0x04;
         std::string timeZone = "EST";
-        std::string wifiSSID = "";
-        std::string wifiPassword = "";
+        std::string wifiSSID = "NETGEAR";
+        std::string wifiPassword = "TYLERSETUP";
         int32_t dataLogIntervalMs = 1000;
         int32_t maxDataLogTimeMs = 1000 * 60 * 30;
 

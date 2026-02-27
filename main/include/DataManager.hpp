@@ -22,6 +22,9 @@ public:
     T* allocate(std::size_t n) {
         void* ptr = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (ptr == nullptr) {
+            ptr = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_8BIT);
+        }
+        if (ptr == nullptr) {
             std::abort();
         }
         return static_cast<T*>(ptr);
@@ -67,7 +70,7 @@ class DataManager{
         std::vector<DataPoint> GetAllData() const;
         esp_err_t ClearData();
         std::size_t GetDataPointCount() const;
-        std::size_t GetMaxDataPoints() const { return MAX_DATA_POINTS; }
+        std::size_t GetMaxDataPoints() const { return maxDataPoints; }
         std::size_t GetStorageBytesUsed() const;
 
 
@@ -83,6 +86,7 @@ class DataManager{
         int MaxTimeSavedMS = 1000 * 60 * 30; // How much historical data to save in milliseconds, 1 minute to 24 hours, resets at boot time
 
         std::vector<DataPoint, PsramAllocator<DataPoint>> dataLog;
+        std::size_t maxDataPoints = MAX_DATA_POINTS;
         mutable SemaphoreHandle_t dataMutex = nullptr;
 
         bool CheckSettingsValid();

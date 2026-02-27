@@ -4,11 +4,14 @@
 #include "HardwareManager.hpp"
 #include "PID.hpp"
 #include "SettingsManager.hpp"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
 
 namespace {
+constexpr const char* TAG = "DataManager";
+
 class ScopedDataLock {
 public:
     explicit ScopedDataLock(SemaphoreHandle_t mutex)
@@ -36,6 +39,27 @@ std::size_t EstimateDataPoints(std::size_t intervalMs, std::size_t windowMs) {
         return 0;
     }
     return windowMs / intervalMs;
+}
+
+std::size_t EstimateMemoryBoundDataPoints() {
+    constexpr std::size_t kInternalReserveDivisor = 8;
+    constexpr std::size_t kInternalBudgetMaxBytes = 96 * 1024;
+
+    const std::size_t psramFreeBytes = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    const std::size_t internalFreeBytes = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    std::size_t budgetBytes = 0;
+    if (psramFreeBytes > 0) {
+        budgetBytes = (psramFreeBytes * 70) / 100;
+    } else {
+        budgetBytes = internalFreeBytes / kInternalReserveDivisor;
+        if (budgetBytes > kInternalBudgetMaxBytes) {
+            budgetBytes = kInternalBudgetMaxBytes;
+        }
+    }
+
+    const std::size_t points = budgetBytes / sizeof(DataPoint);
+    return (points == 0) ? 1 : points;
 }
 }
 
@@ -149,7 +173,7 @@ esp_err_t DataManager::ChangeDataLogInterval(int newIntervalMs) {
         currentlyLogging = LogData;
     }
 
-    if (EstimateDataPoints(static_cast<std::size_t>(newIntervalMs), static_cast<std::size_t>(currentMaxTimeMs)) > MAX_DATA_POINTS) {
+    if (EstimateDataPoints(static_cast<std::size_t>(newIntervalMs), static_cast<std::size_t>(currentMaxTimeMs)) > maxDataPoints) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -187,7 +211,7 @@ esp_err_t DataManager::ChangeMaxTimeSaved(int newMaxTimeSavedMs) {
         currentlyLogging = LogData;
     }
 
-    if (EstimateDataPoints(static_cast<std::size_t>(currentIntervalMs), static_cast<std::size_t>(newMaxTimeSavedMs)) > MAX_DATA_POINTS) {
+    if (EstimateDataPoints(static_cast<std::size_t>(currentIntervalMs), static_cast<std::size_t>(newMaxTimeSavedMs)) > maxDataPoints) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -219,11 +243,33 @@ DataManager::DataManager() {
     DataLogIntervalMs = settings.GetDataLogIntervalMs();
     MaxTimeSavedMS = settings.GetMaxDataLogTimeMs();
 
-    dataLog.reserve(MAX_DATA_POINTS);
     if (!CheckSettingsValid()) {
         DataLogIntervalMs = 1000;
         MaxTimeSavedMS = 1000 * 60 * 30;
         LogData = true;
+    }
+
+    const std::size_t settingsPoints = EstimateDataPoints(
+        static_cast<std::size_t>(DataLogIntervalMs),
+        static_cast<std::size_t>(MaxTimeSavedMS));
+    const std::size_t desiredPoints = std::max<std::size_t>(
+        1,
+        std::min<std::size_t>(settingsPoints, MAX_DATA_POINTS));
+    const std::size_t memoryBoundPoints = std::min<std::size_t>(
+        EstimateMemoryBoundDataPoints(),
+        MAX_DATA_POINTS);
+
+    maxDataPoints = std::max<std::size_t>(1, std::min(desiredPoints, memoryBoundPoints));
+    dataLog.reserve(maxDataPoints);
+
+    if (maxDataPoints < desiredPoints) {
+        const std::size_t adjustedWindowMs = maxDataPoints * static_cast<std::size_t>(DataLogIntervalMs);
+        MaxTimeSavedMS = static_cast<int>(adjustedWindowMs);
+        ESP_LOGW(
+            TAG,
+            "Limiting data log capacity to %u points (%u bytes) due to available heap",
+            static_cast<unsigned>(maxDataPoints),
+            static_cast<unsigned>(maxDataPoints * sizeof(DataPoint)));
     }
 
     if (LogData) {
@@ -329,7 +375,7 @@ esp_err_t DataManager::LogDataPoint() {
     newDataPoint.chamberRunning = Controller::getInstance().IsRunning();
 
     ScopedDataLock lock(dataMutex);
-    if (dataLog.size() >= MAX_DATA_POINTS) {
+    if (dataLog.size() >= maxDataPoints) {
         dataLog.erase(dataLog.begin());
     }
     dataLog.push_back(newDataPoint);
