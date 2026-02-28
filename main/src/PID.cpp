@@ -14,13 +14,22 @@ esp_err_t PID::Reset() {
 }
 
 double PID::Calculate(double setPoint, double processValue) {
+    auto clampPTermToBand = [](double pTerm, double error) {
+        if (error > 0.0) {
+            return std::max(0.0, pTerm);
+        }
+        if (error < 0.0) {
+            return std::min(0.0, pTerm);
+        }
+        return pTerm;
+    };
     
     if (firstRun) {
         const double error = setPoint - processValue;
         const double errorWeighted = (setpointWeight * setPoint) - processValue;
         previousError = error;
         previousPV = processValue;
-        previousP = Kp * errorWeighted;
+        previousP = clampPTermToBand(Kp * errorWeighted, error);
         previousI = 0.0;
         previousD = 0.0;
         previousOutput = std::clamp(previousP, OutputMin, OutputMax);
@@ -51,7 +60,7 @@ double PID::Calculate(double setPoint, double processValue) {
     // Apply derivative filtering
     dFiltered = DerivativeFilterAlpha * derivative + (1 - DerivativeFilterAlpha) * dFiltered;
 
-    const double pTerm = Kp * errorWeighted;
+    const double pTerm = clampPTermToBand(Kp * errorWeighted, error);
     const double dTerm = Kd * dFiltered;
     const double outputNoI = pTerm + dTerm;
 
