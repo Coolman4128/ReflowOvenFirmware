@@ -5,6 +5,7 @@
 #include "DataManager.hpp"
 #include "HardwareManager.hpp"
 #include "PID.hpp"
+#include "ProfileEngine.hpp"
 #include "TimeManager.hpp"
 #include "WiFiManager.hpp"
 
@@ -21,6 +22,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <sys/stat.h>
 #include <unordered_map>
@@ -101,6 +103,47 @@ bool ParseRelayWeightArray(cJSON* arr, std::unordered_map<int, double>& out) {
     return true;
 }
 
+bool ParseSlotPath(const std::string& path, int& outSlot) {
+    constexpr const char* kPrefix = "/api/v1/profiles/slots/";
+    if (path.rfind(kPrefix, 0) != 0) {
+        return false;
+    }
+
+    const std::string suffix = path.substr(std::strlen(kPrefix));
+    if (suffix.empty()) {
+        return false;
+    }
+
+    for (char ch : suffix) {
+        if (ch < '0' || ch > '9') {
+            return false;
+        }
+    }
+
+    outSlot = std::atoi(suffix.c_str());
+    return true;
+}
+
+std::string BuildValidationMessage(const std::vector<ProfileValidationError>& errors) {
+    if (errors.empty()) {
+        return "Profile validation failed";
+    }
+
+    const ProfileValidationError& first = errors.front();
+    std::string message = "Profile validation failed: ";
+    if (first.stepIndex >= 0) {
+        message += "step ";
+        message += std::to_string(first.stepIndex + 1);
+        message += " ";
+    }
+    if (!first.field.empty()) {
+        message += first.field;
+        message += " ";
+    }
+    message += first.message;
+    return message;
+}
+
 const char* ContentTypeForPath(const std::string& path) {
     if (path.size() >= 5 && path.substr(path.size() - 5) == ".html") return "text/html; charset=utf-8";
     if (path.size() >= 4 && path.substr(path.size() - 4) == ".css") return "text/css; charset=utf-8";
@@ -116,6 +159,7 @@ const char* ContentTypeForPath(const std::string& path) {
 cJSON* BuildStatusDataObject() {
     Controller& controller = Controller::getInstance();
     DataManager& dataManager = DataManager::getInstance();
+    ProfileEngine& profileEngine = ProfileEngine::getInstance();
     WiFiManager& wifiManager = WiFiManager::getInstance();
     TimeManager& timeManager = TimeManager::getInstance();
     HardwareManager& hardware = HardwareManager::getInstance();
@@ -134,6 +178,19 @@ cJSON* BuildStatusDataObject() {
     cJSON_AddNumberToObject(controllerObj, "i_term", controller.GetPIDController()->GetPreviousI());
     cJSON_AddNumberToObject(controllerObj, "d_term", controller.GetPIDController()->GetPreviousD());
     cJSON_AddItemToObject(root, "controller", controllerObj);
+
+    const ProfileRuntimeStatus profileStatus = profileEngine.GetRuntimeStatus();
+    cJSON* profileObj = cJSON_CreateObject();
+    cJSON_AddBoolToObject(profileObj, "running", profileStatus.running);
+    cJSON_AddStringToObject(profileObj, "name", profileStatus.name.c_str());
+    cJSON_AddStringToObject(profileObj, "source", profileStatus.source.c_str());
+    cJSON_AddNumberToObject(profileObj, "slot_index", profileStatus.slotIndex);
+    cJSON_AddNumberToObject(profileObj, "current_step_number", profileStatus.currentStepNumber);
+    cJSON_AddStringToObject(profileObj, "current_step_type", profileStatus.currentStepType.c_str());
+    cJSON_AddNumberToObject(profileObj, "step_elapsed_s", profileStatus.stepElapsedS);
+    cJSON_AddNumberToObject(profileObj, "profile_elapsed_s", profileStatus.profileElapsedS);
+    cJSON_AddStringToObject(profileObj, "last_end_reason", profileStatus.lastEndReason.c_str());
+    cJSON_AddItemToObject(root, "profile", profileObj);
 
     cJSON* hardwareObj = cJSON_CreateObject();
     cJSON* temperatures = cJSON_CreateArray();
@@ -174,7 +231,7 @@ cJSON* BuildStatusDataObject() {
     cJSON_AddItemToObject(root, "data", dataObj);
 
     cJSON* featuresObj = cJSON_CreateObject();
-    cJSON_AddBoolToObject(featuresObj, "profiles_support_execution", false);
+    cJSON_AddBoolToObject(featuresObj, "profiles_support_execution", true);
     cJSON_AddItemToObject(root, "features", featuresObj);
 
     return root;
@@ -829,18 +886,64 @@ esp_err_t WebServerManager::HandleApiGet(httpd_req_t* req, const std::string& pa
     }
 
     if (path == "/api/v1/profiles") {
+        ProfileEngine& profiles = ProfileEngine::getInstance();
         cJSON* root = cJSON_CreateObject();
-        cJSON_AddBoolToObject(root, "supports_execution", false);
+        cJSON_AddBoolToObject(root, "supports_execution", true);
 
-        cJSON* profiles = cJSON_CreateArray();
-        cJSON* profile = cJSON_CreateObject();
-        cJSON_AddStringToObject(profile, "id", "sample-lead-free");
-        cJSON_AddStringToObject(profile, "name", "Lead-Free SAC305 (Sample)");
-        cJSON_AddStringToObject(profile, "description", "Sample profile. Execution not implemented yet.");
-        cJSON_AddItemToArray(profiles, profile);
-        cJSON_AddItemToObject(root, "profiles", profiles);
+        cJSON* limits = cJSON_CreateObject();
+        cJSON_AddNumberToObject(limits, "max_slots", ProfileEngine::MAX_SLOTS);
+        cJSON_AddNumberToObject(limits, "max_steps", ProfileEngine::MAX_STEPS);
+        cJSON_AddItemToObject(root, "limits", limits);
+
+        cJSON* uploaded = cJSON_CreateObject();
+        const std::optional<ProfileDefinition> uploadedProfile = profiles.GetUploadedProfile();
+        cJSON_AddBoolToObject(uploaded, "present", uploadedProfile.has_value());
+        if (uploadedProfile.has_value()) {
+            cJSON_AddStringToObject(uploaded, "name", uploadedProfile->name.c_str());
+            cJSON_AddNumberToObject(uploaded, "step_count", static_cast<double>(uploadedProfile->steps.size()));
+        }
+        cJSON_AddItemToObject(root, "uploaded", uploaded);
+
+        cJSON* slots = cJSON_CreateArray();
+        const auto summaries = profiles.GetSlotSummaries();
+        for (const ProfileSlotSummary& summary : summaries) {
+            cJSON* slotObj = cJSON_CreateObject();
+            cJSON_AddNumberToObject(slotObj, "slot_index", summary.slotIndex);
+            cJSON_AddBoolToObject(slotObj, "occupied", summary.occupied);
+            cJSON_AddStringToObject(slotObj, "name", summary.name.c_str());
+            cJSON_AddNumberToObject(slotObj, "step_count", static_cast<double>(summary.stepCount));
+            cJSON_AddItemToArray(slots, slotObj);
+        }
+        cJSON_AddItemToObject(root, "slots", slots);
 
         return SendJsonSuccess(req, JsonStringFromObject(root));
+    }
+
+    if (path == "/api/v1/profiles/uploaded") {
+        const std::optional<ProfileDefinition> uploadedProfile = ProfileEngine::getInstance().GetUploadedProfile();
+        if (!uploadedProfile.has_value()) {
+            return SendJsonError(req, 404, "PROFILE_NOT_FOUND", "No uploaded profile in memory");
+        }
+
+        return SendJsonSuccess(req, ProfileEngine::getInstance().SerializeProfileJson(uploadedProfile.value()));
+    }
+
+    int slotIndex = -1;
+    if (ParseSlotPath(path, slotIndex)) {
+        if (slotIndex < 0 || slotIndex >= ProfileEngine::MAX_SLOTS) {
+            return SendJsonError(req, 400, "PROFILE_SLOT_INVALID", "slot index must be in [0,4]");
+        }
+
+        ProfileDefinition slotProfile;
+        esp_err_t err = ProfileEngine::getInstance().GetSlotProfile(slotIndex, slotProfile);
+        if (err == ESP_ERR_NOT_FOUND) {
+            return SendJsonError(req, 404, "PROFILE_NOT_FOUND", "Profile slot is empty");
+        }
+        if (err != ESP_OK) {
+            return SendJsonError(req, 500, "PROFILE_LOAD_FAILED", esp_err_to_name(err));
+        }
+
+        return SendJsonSuccess(req, ProfileEngine::getInstance().SerializeProfileJson(slotProfile));
     }
 
     return SendJsonError(req, 404, "NOT_FOUND", "Endpoint not found");
@@ -856,6 +959,15 @@ esp_err_t WebServerManager::HandleApiPost(httpd_req_t* req, const std::string& p
     }
 
     if (path == "/api/v1/control/stop") {
+        ProfileEngine& profiles = ProfileEngine::getInstance();
+        if (profiles.IsRunning()) {
+            esp_err_t err = profiles.CancelRunning(ProfileEndReason::CancelledByUser);
+            if (err != ESP_OK) {
+                return SendJsonError(req, 409, "STOP_FAILED", esp_err_to_name(err));
+            }
+            return SendJsonSuccess(req, "{}");
+        }
+
         esp_err_t err = Controller::getInstance().Stop();
         if (err != ESP_OK) {
             return SendJsonError(req, 409, "STOP_FAILED", esp_err_to_name(err));
@@ -880,10 +992,91 @@ esp_err_t WebServerManager::HandleApiPost(httpd_req_t* req, const std::string& p
             return SendJsonError(req, 400, "BAD_SETPOINT", "setpoint_c must be numeric");
         }
 
+        if (Controller::getInstance().IsSetpointLockedByProfile()) {
+            cJSON_Delete(json);
+            return SendJsonError(req, 409, "PROFILE_SETPOINT_LOCKED", "setpoint is locked while a profile is running");
+        }
+
         esp_err_t err = Controller::getInstance().SetSetPoint(setpoint->valuedouble);
         cJSON_Delete(json);
         if (err != ESP_OK) {
             return SendJsonError(req, 400, "SETPOINT_FAILED", esp_err_to_name(err));
+        }
+
+        return SendJsonSuccess(req, "{}");
+    }
+
+    if (path == "/api/v1/profiles/uploaded") {
+        std::string body;
+        if (ReadRequestBody(req, body) != ESP_OK) {
+            return SendJsonError(req, 400, "BAD_BODY", "Failed to read request body");
+        }
+
+        ProfileDefinition parsedProfile;
+        std::vector<ProfileValidationError> errors;
+        esp_err_t err = ProfileEngine::getInstance().ParseProfileJson(body, parsedProfile, errors);
+        if (err != ESP_OK) {
+            return SendJsonError(req, 400, "PROFILE_VALIDATION_FAILED", BuildValidationMessage(errors).c_str());
+        }
+
+        err = ProfileEngine::getInstance().SetUploadedProfile(parsedProfile, &errors);
+        if (err != ESP_OK) {
+            return SendJsonError(req, 400, "PROFILE_VALIDATION_FAILED", BuildValidationMessage(errors).c_str());
+        }
+
+        return SendJsonSuccess(req, "{}");
+    }
+
+    if (path == "/api/v1/profiles/run") {
+        std::string body;
+        if (ReadRequestBody(req, body) != ESP_OK) {
+            return SendJsonError(req, 400, "BAD_BODY", "Failed to read request body");
+        }
+
+        cJSON* json = cJSON_Parse(body.c_str());
+        if (json == nullptr) {
+            return SendJsonError(req, 400, "BAD_JSON", "Invalid JSON");
+        }
+
+        cJSON* source = cJSON_GetObjectItem(json, "source");
+        if (!cJSON_IsString(source) || source->valuestring == nullptr) {
+            cJSON_Delete(json);
+            return SendJsonError(req, 400, "BAD_PROFILE_RUN_ARGS", "source must be 'uploaded' or 'slot'");
+        }
+
+        esp_err_t err = ESP_OK;
+        const std::string sourceValue = source->valuestring;
+        if (sourceValue == "uploaded") {
+            err = ProfileEngine::getInstance().StartFromUploaded();
+        } else if (sourceValue == "slot") {
+            cJSON* slotIndex = cJSON_GetObjectItem(json, "slot_index");
+            if (!cJSON_IsNumber(slotIndex)) {
+                cJSON_Delete(json);
+                return SendJsonError(req, 400, "BAD_PROFILE_RUN_ARGS", "slot_index must be numeric when source is slot");
+            }
+            if (slotIndex->valueint < 0 || slotIndex->valueint >= ProfileEngine::MAX_SLOTS) {
+                cJSON_Delete(json);
+                return SendJsonError(req, 400, "PROFILE_SLOT_INVALID", "slot index must be in [0,4]");
+            }
+            err = ProfileEngine::getInstance().StartFromSlot(slotIndex->valueint);
+        } else {
+            cJSON_Delete(json);
+            return SendJsonError(req, 400, "BAD_PROFILE_RUN_ARGS", "source must be 'uploaded' or 'slot'");
+        }
+
+        cJSON_Delete(json);
+
+        if (err == ESP_ERR_INVALID_STATE && ProfileEngine::getInstance().IsRunning()) {
+            return SendJsonError(req, 409, "PROFILE_ALREADY_RUNNING", "A profile is already running");
+        }
+        if (err == ESP_ERR_NOT_FOUND) {
+            return SendJsonError(req, 404, "PROFILE_NOT_FOUND", "Requested profile source was not found");
+        }
+        if (err == ESP_ERR_INVALID_ARG) {
+            return SendJsonError(req, 400, "PROFILE_VALIDATION_FAILED", "Profile failed validation");
+        }
+        if (err != ESP_OK) {
+            return SendJsonError(req, 409, "PROFILE_START_FAILED", esp_err_to_name(err));
         }
 
         return SendJsonSuccess(req, "{}");
@@ -936,6 +1129,34 @@ esp_err_t WebServerManager::HandleApiPut(httpd_req_t* req, const std::string& pa
     cJSON* json = cJSON_Parse(body.c_str());
     if (json == nullptr) {
         return SendJsonError(req, 400, "BAD_JSON", "Invalid JSON");
+    }
+
+    int slotIndex = -1;
+    if (ParseSlotPath(path, slotIndex)) {
+        if (slotIndex < 0 || slotIndex >= ProfileEngine::MAX_SLOTS) {
+            cJSON_Delete(json);
+            return SendJsonError(req, 400, "PROFILE_SLOT_INVALID", "slot index must be in [0,4]");
+        }
+
+        ProfileDefinition parsedProfile;
+        std::vector<ProfileValidationError> errors;
+        esp_err_t err = ProfileEngine::getInstance().ParseProfileJson(body, parsedProfile, errors);
+        if (err != ESP_OK) {
+            cJSON_Delete(json);
+            const std::string message = BuildValidationMessage(errors);
+            return SendJsonError(req, 400, "PROFILE_VALIDATION_FAILED", message.c_str());
+        }
+
+        err = ProfileEngine::getInstance().SaveProfileToSlot(slotIndex, parsedProfile);
+        cJSON_Delete(json);
+        if (err == ESP_ERR_INVALID_STATE) {
+            return SendJsonError(req, 409, "SLOT_OCCUPIED", "Slot already occupied; delete it first");
+        }
+        if (err != ESP_OK) {
+            return SendJsonError(req, 500, "PROFILE_SAVE_FAILED", esp_err_to_name(err));
+        }
+
+        return SendJsonSuccess(req, "{}");
     }
 
     if (path == "/api/v1/controller/config/pid") {
@@ -1101,6 +1322,25 @@ esp_err_t WebServerManager::HandleApiDelete(httpd_req_t* req, const std::string&
         esp_err_t err = DataManager::getInstance().ClearData();
         if (err != ESP_OK) {
             return SendJsonError(req, 500, "CLEAR_FAILED", esp_err_to_name(err));
+        }
+
+        return SendJsonSuccess(req, "{}");
+    }
+
+    if (path == "/api/v1/profiles/uploaded") {
+        ProfileEngine::getInstance().ClearUploadedProfile();
+        return SendJsonSuccess(req, "{}");
+    }
+
+    int slotIndex = -1;
+    if (ParseSlotPath(path, slotIndex)) {
+        if (slotIndex < 0 || slotIndex >= ProfileEngine::MAX_SLOTS) {
+            return SendJsonError(req, 400, "PROFILE_SLOT_INVALID", "slot index must be in [0,4]");
+        }
+
+        const esp_err_t err = ProfileEngine::getInstance().DeleteSlotProfile(slotIndex);
+        if (err != ESP_OK) {
+            return SendJsonError(req, 500, "PROFILE_DELETE_FAILED", esp_err_to_name(err));
         }
 
         return SendJsonSuccess(req, "{}");

@@ -102,6 +102,11 @@ bool Controller::IsAlarming() const {
     return alarming;
 }
 
+bool Controller::IsSetpointLockedByProfile() const {
+    ScopedLock lock(stateMutex);
+    return setpointLockedByProfile;
+}
+
 double Controller::GetInputFilterTimeMs() const {
     ScopedLock lock(stateMutex);
     return inputFilterTimeMs;
@@ -237,8 +242,26 @@ esp_err_t Controller::SetSetPoint(double newSetPoint) {
     }
 
     ScopedLock lock(stateMutex);
+    if (setpointLockedByProfile) {
+        return ESP_ERR_INVALID_STATE;
+    }
     setPoint = newSetPoint;
     return ESP_OK;
+}
+
+esp_err_t Controller::SetSetPointFromProfile(double newSetPoint) {
+    if (newSetPoint < MIN_SETPOINT || newSetPoint > MAX_SETPOINT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ScopedLock lock(stateMutex);
+    setPoint = newSetPoint;
+    return ESP_OK;
+}
+
+void Controller::SetProfileSetpointLock(bool locked) {
+    ScopedLock lockGuard(stateMutex);
+    setpointLockedByProfile = locked;
 }
 
 esp_err_t Controller::SetInputFilterTime(double newFilterTimeMs) {

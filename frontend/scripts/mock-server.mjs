@@ -36,13 +36,20 @@ const state = {
   points: []
 };
 
-const sampleProfiles = [
-  {
-    id: 'sample-lead-free',
-    name: 'Lead-Free SAC305 (Sample)',
-    description: 'Sample profile. Execution not implemented yet.'
-  }
-];
+const profileState = {
+  running: false,
+  name: '',
+  source: 'none',
+  slot_index: -1,
+  current_step_number: 0,
+  current_step_type: 'none',
+  step_elapsed_s: 0,
+  profile_elapsed_s: 0,
+  last_end_reason: 'none'
+};
+
+let uploadedProfile = null;
+const profileSlots = new Array(5).fill(null);
 
 function json(res, code, payload) {
   res.writeHead(code, {
@@ -66,6 +73,9 @@ function makeStatusData() {
       p_term: state.p,
       i_term: state.i,
       d_term: state.d
+    },
+    profile: {
+      ...profileState
     },
     hardware: {
       temperatures_c: [state.process + 0.3, state.process - 0.4, state.process + 0.7, state.process - 0.1],
@@ -92,7 +102,7 @@ function makeStatusData() {
       max_points: 8000
     },
     features: {
-      profiles_support_execution: false
+      profiles_support_execution: true
     }
   };
 }
@@ -140,6 +150,17 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && path === '/api/v1/control/stop') {
+    if (profileState.running) {
+      profileState.running = false;
+      profileState.last_end_reason = 'cancelled_by_user';
+      profileState.source = 'none';
+      profileState.slot_index = -1;
+      profileState.current_step_number = 0;
+      profileState.current_step_type = 'none';
+      profileState.step_elapsed_s = 0;
+      profileState.profile_elapsed_s = 0;
+      profileState.name = '';
+    }
     state.running = false;
     state.state = 'Idle';
     state.pid = 0;
@@ -148,6 +169,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && path === '/api/v1/control/setpoint') {
+    if (profileState.running) {
+      json(res, 409, errEnvelope('PROFILE_SETPOINT_LOCKED', 'setpoint is locked while a profile is running'));
+      return;
+    }
     const body = JSON.parse(await readBody(req));
     state.setpoint = Number(body.setpoint_c ?? state.setpoint);
     json(res, 200, envelope({}));
@@ -315,7 +340,111 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && path === '/api/v1/profiles') {
-    json(res, 200, envelope({ supports_execution: false, profiles: sampleProfiles }));
+    json(res, 200, envelope({
+      supports_execution: true,
+      limits: { max_slots: 5, max_steps: 40 },
+      uploaded: uploadedProfile ? { present: true, name: uploadedProfile.name, step_count: uploadedProfile.steps?.length ?? 0 } : { present: false },
+      slots: profileSlots.map((slot, idx) => ({
+        slot_index: idx,
+        occupied: !!slot,
+        name: slot?.name ?? '',
+        step_count: slot?.steps?.length ?? 0
+      }))
+    }));
+    return;
+  }
+
+  if (req.method === 'GET' && path === '/api/v1/profiles/uploaded') {
+    if (!uploadedProfile) {
+      json(res, 404, errEnvelope('PROFILE_NOT_FOUND', 'No uploaded profile'));
+      return;
+    }
+    json(res, 200, envelope(uploadedProfile));
+    return;
+  }
+
+  if (req.method === 'POST' && path === '/api/v1/profiles/uploaded') {
+    const body = JSON.parse(await readBody(req));
+    uploadedProfile = body;
+    json(res, 200, envelope({}));
+    return;
+  }
+
+  if (req.method === 'DELETE' && path === '/api/v1/profiles/uploaded') {
+    uploadedProfile = null;
+    json(res, 200, envelope({}));
+    return;
+  }
+
+  if (path.startsWith('/api/v1/profiles/slots/')) {
+    const slot = Number(path.substring('/api/v1/profiles/slots/'.length));
+    if (!Number.isInteger(slot) || slot < 0 || slot >= 5) {
+      json(res, 400, errEnvelope('PROFILE_SLOT_INVALID', 'Invalid slot index'));
+      return;
+    }
+
+    if (req.method === 'GET') {
+      const stored = profileSlots[slot];
+      if (!stored) {
+        json(res, 404, errEnvelope('PROFILE_NOT_FOUND', 'Slot is empty'));
+        return;
+      }
+      json(res, 200, envelope(stored));
+      return;
+    }
+
+    if (req.method === 'PUT') {
+      if (profileSlots[slot]) {
+        json(res, 409, errEnvelope('SLOT_OCCUPIED', 'Slot already occupied'));
+        return;
+      }
+      const body = JSON.parse(await readBody(req));
+      profileSlots[slot] = body;
+      json(res, 200, envelope({}));
+      return;
+    }
+
+    if (req.method === 'DELETE') {
+      profileSlots[slot] = null;
+      json(res, 200, envelope({}));
+      return;
+    }
+  }
+
+  if (req.method === 'POST' && path === '/api/v1/profiles/run') {
+    const body = JSON.parse(await readBody(req));
+    if (profileState.running) {
+      json(res, 409, errEnvelope('PROFILE_ALREADY_RUNNING', 'Profile already running'));
+      return;
+    }
+
+    let selected = null;
+    if (body.source === 'uploaded') {
+      selected = uploadedProfile;
+      profileState.source = 'uploaded';
+      profileState.slot_index = -1;
+    } else if (body.source === 'slot') {
+      const slotIndex = Number(body.slot_index);
+      selected = profileSlots[slotIndex] ?? null;
+      profileState.source = 'slot';
+      profileState.slot_index = slotIndex;
+    }
+
+    if (!selected) {
+      json(res, 404, errEnvelope('PROFILE_NOT_FOUND', 'Requested profile not found'));
+      return;
+    }
+
+    profileState.running = true;
+    profileState.name = selected.name ?? 'Profile';
+    profileState.current_step_number = 1;
+    profileState.current_step_type = selected.steps?.[0]?.type ?? 'direct';
+    profileState.step_elapsed_s = 0;
+    profileState.profile_elapsed_s = 0;
+    profileState.last_end_reason = 'none';
+    state.running = true;
+    state.state = 'Steady State';
+    json(res, 200, envelope({}));
     return;
   }
 
@@ -359,6 +488,24 @@ setInterval(() => {
   state.points.push(sample);
   if (state.points.length > 5000) {
     state.points.shift();
+  }
+
+  if (profileState.running) {
+    profileState.profile_elapsed_s += 0.25;
+    profileState.step_elapsed_s += 0.25;
+    if (profileState.profile_elapsed_s >= 120) {
+      profileState.running = false;
+      profileState.last_end_reason = 'completed';
+      profileState.source = 'none';
+      profileState.slot_index = -1;
+      profileState.current_step_number = 0;
+      profileState.current_step_type = 'none';
+      profileState.step_elapsed_s = 0;
+      profileState.profile_elapsed_s = 0;
+      profileState.name = '';
+      state.running = false;
+      state.state = 'Idle';
+    }
   }
 
   const payload = JSON.stringify({ type: 'telemetry', data: makeStatusData() });

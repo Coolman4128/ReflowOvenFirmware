@@ -13,6 +13,7 @@ export function DashboardPage({ status, onSetpoint }: Props) {
 
   const controller = status?.controller;
   const hardware = status?.hardware;
+  const profileRunning = !!status?.profile?.running;
 
   const pidDirection = useMemo(() => {
     if (!controller) return 'idle';
@@ -53,11 +54,13 @@ export function DashboardPage({ status, onSetpoint }: Props) {
               placeholder={`New setpoint ${degC}`}
               value={setpointInput}
               onChange={(e) => setSetpointInput(e.target.value)}
+              disabled={profileRunning}
             />
-            <button className="primary" onClick={applySetpoint} disabled={saving}>
-              {saving ? 'Saving...' : 'Apply'}
+            <button className="primary" onClick={applySetpoint} disabled={saving || profileRunning}>
+              {profileRunning ? 'Locked' : (saving ? 'Saving...' : 'Apply')}
             </button>
           </div>
+          {profileRunning && <div className="muted" style={{ marginTop: '0.5rem' }}>Setpoint is locked while a profile is running.</div>}
         </section>
       </div>
 

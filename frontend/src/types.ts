@@ -39,8 +39,21 @@ export interface DataStatus {
   max_points: number;
 }
 
+export interface ProfileRuntimeStatus {
+  running: boolean;
+  name: string;
+  source: 'none' | 'uploaded' | 'slot';
+  slot_index: number;
+  current_step_number: number;
+  current_step_type: 'none' | 'direct' | 'wait' | 'soak' | 'ramp_time' | 'ramp_rate' | 'jump';
+  step_elapsed_s: number;
+  profile_elapsed_s: number;
+  last_end_reason: string;
+}
+
 export interface StatusData {
   controller: ControllerStatus;
+  profile: ProfileRuntimeStatus;
   hardware: HardwareStatus;
   wifi: WifiStatus;
   time: TimeStatus;
@@ -48,6 +61,53 @@ export interface StatusData {
   features: {
     profiles_support_execution: boolean;
   };
+}
+
+export type ProfileStep =
+  | {
+    type: 'direct';
+    setpoint_c: number;
+  }
+  | {
+    type: 'wait';
+    wait_time_s?: number;
+    pv_target_c?: number;
+  }
+  | {
+    type: 'soak';
+    setpoint_c: number;
+    soak_time_s: number;
+    guaranteed?: boolean;
+    deviation_c?: number;
+  }
+  | {
+    type: 'ramp_time';
+    setpoint_c: number;
+    ramp_time_s: number;
+  }
+  | {
+    type: 'ramp_rate';
+    setpoint_c: number;
+    ramp_rate_c_per_s: number;
+  }
+  | {
+    type: 'jump';
+    target_step_number: number;
+    repeat_count: number;
+  };
+
+export interface ProfileDefinition {
+  schema_version: number;
+  name: string;
+  description: string;
+  steps: ProfileStep[];
+}
+
+export interface ProfileSlotSummary {
+  slot_index: number;
+  occupied: boolean;
+  name: string;
+  step_count: number;
 }
 
 export interface ApiEnvelope<T> {

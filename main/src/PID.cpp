@@ -45,7 +45,7 @@ double PID::Calculate(double setPoint, double processValue) {
         DerivativeFilterAlpha = 1.0;
     }
 
-    const double derivative = (processValue - previousPV) / dt;
+    const double derivative = -1 * (processValue - previousPV) / dt;
     previousPV = processValue;
 
     // Apply derivative filtering

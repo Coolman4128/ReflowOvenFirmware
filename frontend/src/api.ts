@@ -1,4 +1,11 @@
-import { ApiEnvelope, ControllerConfig, HistoryPoint, StatusData } from './types';
+import {
+  ApiEnvelope,
+  ControllerConfig,
+  HistoryPoint,
+  ProfileDefinition,
+  ProfileSlotSummary,
+  StatusData
+} from './types';
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
 
@@ -11,15 +18,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init
   });
 
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-
   if (response.headers.get('content-type')?.includes('text/csv')) {
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
     return (await response.text()) as T;
   }
 
-  const json = (await response.json()) as ApiEnvelope<T>;
+  let json: ApiEnvelope<T>;
+  try {
+    json = (await response.json()) as ApiEnvelope<T>;
+  } catch {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(json.error?.message ?? `HTTP ${response.status}`);
+  }
+
   if (!json.ok) {
     throw new Error(json.error?.message ?? 'API error');
   }
@@ -78,5 +94,32 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify({ pwm_relays, running_relays, pwm_relay_weights })
   }),
-  getProfiles: () => request<{ supports_execution: boolean; profiles: Array<{ id: string; name: string; description: string }> }>('/api/v1/profiles')
+  getProfilesIndex: () => request<{
+    supports_execution: boolean;
+    limits: { max_slots: number; max_steps: number };
+    uploaded: { present: boolean; name?: string; step_count?: number };
+    slots: ProfileSlotSummary[];
+  }>('/api/v1/profiles'),
+  getUploadedProfile: () => request<ProfileDefinition>('/api/v1/profiles/uploaded'),
+  setUploadedProfile: (profile: ProfileDefinition) => request<{}>('/api/v1/profiles/uploaded', {
+    method: 'POST',
+    body: JSON.stringify(profile)
+  }),
+  clearUploadedProfile: () => request<{}>('/api/v1/profiles/uploaded', { method: 'DELETE' }),
+  getSlotProfile: (slot_index: number) => request<ProfileDefinition>(`/api/v1/profiles/slots/${slot_index}`),
+  saveSlotProfile: (slot_index: number, profile: ProfileDefinition) => request<{}>(`/api/v1/profiles/slots/${slot_index}`, {
+    method: 'PUT',
+    body: JSON.stringify(profile)
+  }),
+  deleteSlotProfile: (slot_index: number) => request<{}>(`/api/v1/profiles/slots/${slot_index}`, { method: 'DELETE' }),
+  runProfile: (payload: { source: 'uploaded' } | { source: 'slot'; slot_index: number }) => request<{}>('/api/v1/profiles/run', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }),
+  getProfiles: () => request<{
+    supports_execution: boolean;
+    limits: { max_slots: number; max_steps: number };
+    uploaded: { present: boolean; name?: string; step_count?: number };
+    slots: ProfileSlotSummary[];
+  }>('/api/v1/profiles')
 };

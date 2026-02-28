@@ -11,6 +11,7 @@ idf_component_register(
         "src/WiFiManager.cpp"
         "src/TimeManager.cpp"
         "src/WebServerManager.cpp"
+        "src/ProfileEngine.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES

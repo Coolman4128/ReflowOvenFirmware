@@ -64,7 +64,7 @@ export default function App() {
       case 'dashboard':
         return <DashboardPage status={status} onSetpoint={onSetpoint} />;
       case 'profiles':
-        return <ProfilesPage />;
+        return <ProfilesPage status={status} />;
       case 'data':
         return <DataPage status={status} />;
       case 'settings':
@@ -118,7 +118,7 @@ export default function App() {
           </div>
 
           <button className={status?.controller.running ? 'secondary' : 'primary'} onClick={toggleRun}>
-            {status?.controller.running ? 'Stop Oven' : 'Start Oven'}
+            {status?.controller.running ? (status?.profile?.running ? 'Stop Oven / Cancel Profile' : 'Stop Oven') : 'Start Oven'}
           </button>
         </div>
       </footer>

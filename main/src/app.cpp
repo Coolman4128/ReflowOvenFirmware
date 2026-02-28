@@ -3,6 +3,7 @@
 #include "Controller.hpp"
 #include "DataManager.hpp"
 #include "HardwareManager.hpp"
+#include "ProfileEngine.hpp"
 #include "SettingsManager.hpp"
 #include "TimeManager.hpp"
 #include "WebServerManager.hpp"
@@ -18,8 +19,10 @@ TaskHandle_t controllerTaskHandle = nullptr;
 
 void ControllerTaskEntry(void* /*arg*/) {
     Controller& controller = Controller::getInstance();
+    ProfileEngine& profileEngine = ProfileEngine::getInstance();
     while (true) {
         (void)controller.RunTick();
+        profileEngine.Tick(static_cast<double>(CONTROLLER_TICK_MS) / 1000.0);
         vTaskDelay(pdMS_TO_TICKS(CONTROLLER_TICK_MS));
     }
 }
@@ -69,6 +72,7 @@ void app_start()
 
     (void)HardwareManager::getInstance();
     (void)Controller::getInstance();
+    ESP_ERROR_CHECK(ProfileEngine::getInstance().Initialize());
     (void)DataManager::getInstance();
 
     ESP_ERROR_CHECK(StartControllerTask());

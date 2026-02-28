@@ -28,6 +28,7 @@ class Controller{
         bool IsRunning() const;
         bool IsDoorOpen() const;
         bool IsAlarming() const;
+        bool IsSetpointLockedByProfile() const;
         double GetInputFilterTimeMs() const;
         std::vector<int> GetInputChannels() const;
         std::vector<int> GetRelaysPWMEnabled() const;
@@ -42,6 +43,8 @@ class Controller{
         esp_err_t OpenDoor();
         esp_err_t CloseDoor();
         esp_err_t SetSetPoint(double newSetPoint);
+        esp_err_t SetSetPointFromProfile(double newSetPoint);
+        void SetProfileSetpointLock(bool locked);
         esp_err_t SetInputFilterTime(double newFilterTimeMs);
         esp_err_t SetPIDGains(double newKp, double newKi, double newKd);
         esp_err_t SetDerivativeFilterTime(double newFilterTimeSeconds);
@@ -78,6 +81,7 @@ class Controller{
         std::string state = "Idle";
         bool alarming = false;
         bool doorOpen = false;
+        bool setpointLockedByProfile = false;
 
         // Controller Runtime properties
         double setPoint = 0.0;
