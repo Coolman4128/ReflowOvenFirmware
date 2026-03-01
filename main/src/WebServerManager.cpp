@@ -750,11 +750,26 @@ esp_err_t WebServerManager::HandleApiGet(httpd_req_t* req, const std::string& pa
         cJSON* root = cJSON_CreateObject();
 
         cJSON* pidObj = cJSON_CreateObject();
-        cJSON_AddNumberToObject(pidObj, "kp", pid->GetKp());
-        cJSON_AddNumberToObject(pidObj, "ki", pid->GetKi());
-        cJSON_AddNumberToObject(pidObj, "kd", pid->GetKd());
+        cJSON_AddNumberToObject(pidObj, "kp", pid->GetHeatingKp()); // Legacy alias for UI compatibility
+        cJSON_AddNumberToObject(pidObj, "ki", pid->GetHeatingKi()); // Legacy alias for UI compatibility
+        cJSON_AddNumberToObject(pidObj, "kd", pid->GetHeatingKd()); // Legacy alias for UI compatibility
+
+        cJSON* heatingObj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(heatingObj, "kp", pid->GetHeatingKp());
+        cJSON_AddNumberToObject(heatingObj, "ki", pid->GetHeatingKi());
+        cJSON_AddNumberToObject(heatingObj, "kd", pid->GetHeatingKd());
+        cJSON_AddItemToObject(pidObj, "heating", heatingObj);
+
+        cJSON* coolingPidObj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(coolingPidObj, "kp", pid->GetCoolingKp());
+        cJSON_AddNumberToObject(coolingPidObj, "ki", pid->GetCoolingKi());
+        cJSON_AddNumberToObject(coolingPidObj, "kd", pid->GetCoolingKd());
+        cJSON_AddItemToObject(pidObj, "cooling", coolingPidObj);
+
         cJSON_AddNumberToObject(pidObj, "derivative_filter_s", pid->GetDerivativeFilterTime());
         cJSON_AddNumberToObject(pidObj, "setpoint_weight", pid->GetSetpointWeight());
+        cJSON_AddNumberToObject(pidObj, "integral_zone_c", pid->GetIntegralZoneC());
+        cJSON_AddNumberToObject(pidObj, "integral_leak_s", pid->GetIntegralLeakTimeSeconds());
         cJSON_AddItemToObject(root, "pid", pidObj);
 
         cJSON_AddNumberToObject(root, "input_filter_ms", controller.GetInputFilterTimeMs());
@@ -804,6 +819,11 @@ esp_err_t WebServerManager::HandleApiGet(httpd_req_t* req, const std::string& pa
         cJSON_AddNumberToObject(doorObj, "open_angle_deg", controller.GetDoorOpenAngleDeg());
         cJSON_AddNumberToObject(doorObj, "max_speed_deg_per_s", controller.GetDoorMaxSpeedDegPerSec());
         cJSON_AddItemToObject(root, "door", doorObj);
+
+        cJSON* coolingObj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(coolingObj, "cool_on_band_c", controller.GetCoolOnBandC());
+        cJSON_AddNumberToObject(coolingObj, "cool_off_band_c", controller.GetCoolOffBandC());
+        cJSON_AddItemToObject(root, "cooling", coolingObj);
 
         return SendJsonSuccess(req, JsonStringFromObject(root));
     }
@@ -1216,25 +1236,90 @@ esp_err_t WebServerManager::HandleApiPut(httpd_req_t* req, const std::string& pa
     }
 
     if (path == "/api/v1/controller/config/pid") {
-        cJSON* kp = cJSON_GetObjectItem(json, "kp");
-        cJSON* ki = cJSON_GetObjectItem(json, "ki");
-        cJSON* kd = cJSON_GetObjectItem(json, "kd");
+        cJSON* heating = cJSON_GetObjectItem(json, "heating");
+        cJSON* cooling = cJSON_GetObjectItem(json, "cooling");
+        cJSON* kp = cJSON_GetObjectItem(json, "kp"); // Legacy heating fields
+        cJSON* ki = cJSON_GetObjectItem(json, "ki"); // Legacy heating fields
+        cJSON* kd = cJSON_GetObjectItem(json, "kd"); // Legacy heating fields
         cJSON* derivativeFilter = cJSON_GetObjectItem(json, "derivative_filter_s");
         cJSON* setpointWeight = cJSON_GetObjectItem(json, "setpoint_weight");
+        cJSON* integralZoneC = cJSON_GetObjectItem(json, "integral_zone_c");
+        cJSON* integralLeakS = cJSON_GetObjectItem(json, "integral_leak_s");
 
-        if (!cJSON_IsNumber(kp) || !cJSON_IsNumber(ki) || !cJSON_IsNumber(kd) || !cJSON_IsNumber(derivativeFilter) ||
-            (setpointWeight != nullptr && !cJSON_IsNumber(setpointWeight))) {
+        if (!cJSON_IsNumber(derivativeFilter) ||
+            (setpointWeight != nullptr && !cJSON_IsNumber(setpointWeight)) ||
+            (integralZoneC != nullptr && !cJSON_IsNumber(integralZoneC)) ||
+            (integralLeakS != nullptr && !cJSON_IsNumber(integralLeakS))) {
             cJSON_Delete(json);
-            return SendJsonError(req, 400, "BAD_PID_ARGS", "kp, ki, kd, derivative_filter_s are required numeric fields. setpoint_weight must be numeric if provided");
+            return SendJsonError(req, 400, "BAD_PID_ARGS", "derivative_filter_s is required. setpoint_weight, integral_zone_c, and integral_leak_s must be numeric if provided");
+        }
+
+        double heatingKp = 0.0;
+        double heatingKi = 0.0;
+        double heatingKd = 0.0;
+        if (heating != nullptr) {
+            if (!cJSON_IsObject(heating)) {
+                cJSON_Delete(json);
+                return SendJsonError(req, 400, "BAD_PID_ARGS", "heating must be an object with kp, ki, kd");
+            }
+            cJSON* heatingKpObj = cJSON_GetObjectItem(heating, "kp");
+            cJSON* heatingKiObj = cJSON_GetObjectItem(heating, "ki");
+            cJSON* heatingKdObj = cJSON_GetObjectItem(heating, "kd");
+            if (!cJSON_IsNumber(heatingKpObj) || !cJSON_IsNumber(heatingKiObj) || !cJSON_IsNumber(heatingKdObj)) {
+                cJSON_Delete(json);
+                return SendJsonError(req, 400, "BAD_PID_ARGS", "heating.kp, heating.ki, and heating.kd are required numeric fields");
+            }
+            heatingKp = heatingKpObj->valuedouble;
+            heatingKi = heatingKiObj->valuedouble;
+            heatingKd = heatingKdObj->valuedouble;
+        } else if (cJSON_IsNumber(kp) && cJSON_IsNumber(ki) && cJSON_IsNumber(kd)) {
+            heatingKp = kp->valuedouble;
+            heatingKi = ki->valuedouble;
+            heatingKd = kd->valuedouble;
+        } else {
+            cJSON_Delete(json);
+            return SendJsonError(req, 400, "BAD_PID_ARGS", "Provide either heating.{kp,ki,kd} or legacy kp,ki,kd");
         }
 
         Controller& controller = Controller::getInstance();
-        esp_err_t err = controller.SetPIDGains(kp->valuedouble, ki->valuedouble, kd->valuedouble);
+        PID* pid = controller.GetPIDController();
+        double coolingKp = pid->GetCoolingKp();
+        double coolingKi = pid->GetCoolingKi();
+        double coolingKd = pid->GetCoolingKd();
+        bool updateCooling = false;
+        if (cooling != nullptr) {
+            if (!cJSON_IsObject(cooling)) {
+                cJSON_Delete(json);
+                return SendJsonError(req, 400, "BAD_PID_ARGS", "cooling must be an object with kp, ki, kd");
+            }
+            cJSON* coolingKpObj = cJSON_GetObjectItem(cooling, "kp");
+            cJSON* coolingKiObj = cJSON_GetObjectItem(cooling, "ki");
+            cJSON* coolingKdObj = cJSON_GetObjectItem(cooling, "kd");
+            if (!cJSON_IsNumber(coolingKpObj) || !cJSON_IsNumber(coolingKiObj) || !cJSON_IsNumber(coolingKdObj)) {
+                cJSON_Delete(json);
+                return SendJsonError(req, 400, "BAD_PID_ARGS", "cooling.kp, cooling.ki, and cooling.kd must be numeric");
+            }
+            coolingKp = coolingKpObj->valuedouble;
+            coolingKi = coolingKiObj->valuedouble;
+            coolingKd = coolingKdObj->valuedouble;
+            updateCooling = true;
+        }
+
+        esp_err_t err = controller.SetHeatingPIDGains(heatingKp, heatingKi, heatingKd);
+        if (err == ESP_OK && updateCooling) {
+            err = controller.SetCoolingPIDGains(coolingKp, coolingKi, coolingKd);
+        }
         if (err == ESP_OK) {
             err = controller.SetDerivativeFilterTime(derivativeFilter->valuedouble);
         }
         if (err == ESP_OK && setpointWeight != nullptr) {
             err = controller.SetSetpointWeight(setpointWeight->valuedouble);
+        }
+        if (err == ESP_OK && integralZoneC != nullptr) {
+            err = controller.SetIntegralZoneC(integralZoneC->valuedouble);
+        }
+        if (err == ESP_OK && integralLeakS != nullptr) {
+            err = controller.SetIntegralLeakTimeSeconds(integralLeakS->valuedouble);
         }
 
         cJSON_Delete(json);
@@ -1242,6 +1327,22 @@ esp_err_t WebServerManager::HandleApiPut(httpd_req_t* req, const std::string& pa
             return SendJsonError(req, 400, "PID_UPDATE_FAILED", esp_err_to_name(err));
         }
 
+        return SendJsonSuccess(req, "{}");
+    }
+
+    if (path == "/api/v1/controller/config/cooling") {
+        cJSON* coolOnBand = cJSON_GetObjectItem(json, "cool_on_band_c");
+        cJSON* coolOffBand = cJSON_GetObjectItem(json, "cool_off_band_c");
+        if (!cJSON_IsNumber(coolOnBand) || !cJSON_IsNumber(coolOffBand)) {
+            cJSON_Delete(json);
+            return SendJsonError(req, 400, "BAD_COOLING_ARGS", "cool_on_band_c and cool_off_band_c are required numeric fields");
+        }
+
+        const esp_err_t err = Controller::getInstance().SetCoolingDoorBands(coolOnBand->valuedouble, coolOffBand->valuedouble);
+        cJSON_Delete(json);
+        if (err != ESP_OK) {
+            return SendJsonError(req, 400, "COOLING_UPDATE_FAILED", esp_err_to_name(err));
+        }
         return SendJsonSuccess(req, "{}");
     }
 

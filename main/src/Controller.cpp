@@ -52,9 +52,18 @@ Controller::Controller()
 
     SettingsManager& settings = SettingsManager::getInstance();
     inputFilterTimeMs = settings.GetInputFilterTime();
-    (void)pidController.Tune(settings.GetProportionalGain(), settings.GetIntegralGain(), settings.GetDerivativeGain());
+    (void)pidController.TuneHeating(
+        settings.GetHeatingProportionalGain(),
+        settings.GetHeatingIntegralGain(),
+        settings.GetHeatingDerivativeGain());
+    (void)pidController.TuneCooling(
+        settings.GetCoolingProportionalGain(),
+        settings.GetCoolingIntegralGain(),
+        settings.GetCoolingDerivativeGain());
     (void)pidController.SetDerivativeFilterTime(settings.GetDerivativeFilterTime());
     (void)pidController.SetSetpointWeight(settings.GetSetpointWeight());
+    (void)pidController.SetIntegralZoneC(settings.GetIntegralZoneC());
+    (void)pidController.SetIntegralLeakTimeSeconds(settings.GetIntegralLeakTimeSeconds());
     ApplyInputsMask(settings.GetInputsIncludedMask());
     ApplyRelaysPWMMask(settings.GetRelaysPWMMask());
     const std::array<double, 8> relayWeights = settings.GetRelayPWMWeights();
@@ -68,6 +77,8 @@ Controller::Controller()
     doorClosedAngleDeg = std::clamp(settings.GetDoorClosedAngleDeg(), 0.0, 180.0);
     doorOpenAngleDeg = std::clamp(settings.GetDoorOpenAngleDeg(), 0.0, 180.0);
     doorMaxSpeedDegPerSec = std::clamp(settings.GetDoorMaxSpeedDegPerSec(), 1.0, 360.0);
+    coolOnBandC = settings.GetCoolOnBandC();
+    coolOffBandC = settings.GetCoolOffBandC();
     doorPreviewAngleDeg = doorOpenAngleDeg;
 }
 
@@ -159,6 +170,16 @@ double Controller::GetDoorMaxSpeedDegPerSec() const {
     return doorMaxSpeedDegPerSec;
 }
 
+double Controller::GetCoolOnBandC() const {
+    ScopedLock lock(stateMutex);
+    return coolOnBandC;
+}
+
+double Controller::GetCoolOffBandC() const {
+    ScopedLock lock(stateMutex);
+    return coolOffBandC;
+}
+
 esp_err_t Controller::RunTick() {
     esp_err_t err = Perform();
     if (err != ESP_OK) {
@@ -205,6 +226,7 @@ esp_err_t Controller::Start() {
         ScopedLock lock(stateMutex);
         running = true;
         doorPreviewActive = false;
+        coolingDoorEnabled = false;
         state = "Steady State";
     }
 
@@ -239,6 +261,7 @@ esp_err_t Controller::Stop() {
         running = false;
         state = "Idle";
         PIDOutput = 0.0;
+        coolingDoorEnabled = false;
     }
 
     return ESP_OK;
@@ -305,22 +328,44 @@ esp_err_t Controller::SetInputFilterTime(double newFilterTimeMs) {
     return SettingsManager::getInstance().SetInputFilterTime(newFilterTimeMs);
 }
 
-esp_err_t Controller::SetPIDGains(double newKp, double newKi, double newKd) {
-    esp_err_t err = pidController.Tune(newKp, newKi, newKd);
+esp_err_t Controller::SetHeatingPIDGains(double newKp, double newKi, double newKd) {
+    esp_err_t err = pidController.TuneHeating(newKp, newKi, newKd);
     if (err != ESP_OK) {
         return err;
     }
 
     SettingsManager& settings = SettingsManager::getInstance();
-    err = settings.SetProportionalGain(newKp);
+    err = settings.SetHeatingProportionalGain(newKp);
     if (err != ESP_OK) {
         return err;
     }
-    err = settings.SetIntegralGain(newKi);
+    err = settings.SetHeatingIntegralGain(newKi);
     if (err != ESP_OK) {
         return err;
     }
-    return settings.SetDerivativeGain(newKd);
+    return settings.SetHeatingDerivativeGain(newKd);
+}
+
+esp_err_t Controller::SetCoolingPIDGains(double newKp, double newKi, double newKd) {
+    esp_err_t err = pidController.TuneCooling(newKp, newKi, newKd);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    SettingsManager& settings = SettingsManager::getInstance();
+    err = settings.SetCoolingProportionalGain(newKp);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = settings.SetCoolingIntegralGain(newKi);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return settings.SetCoolingDerivativeGain(newKd);
+}
+
+esp_err_t Controller::SetPIDGains(double newKp, double newKi, double newKd) {
+    return SetHeatingPIDGains(newKp, newKi, newKd);
 }
 
 esp_err_t Controller::SetDerivativeFilterTime(double newFilterTimeSeconds) {
@@ -343,6 +388,22 @@ esp_err_t Controller::SetSetpointWeight(double newWeight) {
     }
 
     return SettingsManager::getInstance().SetSetpointWeight(newWeight);
+}
+
+esp_err_t Controller::SetIntegralZoneC(double zoneC) {
+    esp_err_t err = pidController.SetIntegralZoneC(zoneC);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return SettingsManager::getInstance().SetIntegralZoneC(zoneC);
+}
+
+esp_err_t Controller::SetIntegralLeakTimeSeconds(double leakTimeSeconds) {
+    esp_err_t err = pidController.SetIntegralLeakTimeSeconds(leakTimeSeconds);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return SettingsManager::getInstance().SetIntegralLeakTimeSeconds(leakTimeSeconds);
 }
 
 esp_err_t Controller::AddInputChannel(int channel) {
@@ -540,28 +601,45 @@ esp_err_t Controller::Perform() {
 esp_err_t Controller::PerformOnRunning() {
     double setPointCopy = 0.0;
     double processValueCopy = 0.0;
+    double coolOnBandCopy = 0.0;
+    double coolOffBandCopy = 0.0;
+    bool coolingEnabledCopy = false;
 
     {
         ScopedLock lock(stateMutex);
         setPointCopy = setPoint;
         processValueCopy = processValue;
+        coolOnBandCopy = coolOnBandC;
+        coolOffBandCopy = coolOffBandC;
+        coolingEnabledCopy = coolingDoorEnabled;
     }
 
     const double output = pidController.Calculate(setPointCopy, processValueCopy);
+    if (!coolingEnabledCopy && processValueCopy > (setPointCopy + coolOnBandCopy)) {
+        coolingEnabledCopy = true;
+    } else if (coolingEnabledCopy && processValueCopy < (setPointCopy + coolOffBandCopy)) {
+        coolingEnabledCopy = false;
+    }
+
+    double effectiveOutput = output;
+    if (!coolingEnabledCopy && effectiveOutput < 0.0) {
+        effectiveOutput = 0.0;
+    }
 
     {
         ScopedLock lock(stateMutex);
-        PIDOutput = output;
+        PIDOutput = effectiveOutput;
+        coolingDoorEnabled = coolingEnabledCopy;
     }
 
-    if (output < 0) {
-        const double doorOpenFraction = ComputeCoolingDoorOpenFraction(output, processValueCopy);
+    if (effectiveOutput < 0) {
+        const double doorOpenFraction = ComputeCoolingDoorOpenFraction(effectiveOutput, processValueCopy);
         const double angleFromPercent = ComputeDoorAngleFromFraction(doorOpenFraction);
         ApplyDoorTargetAngle(angleFromPercent, TICK_INTERVAL_MS / 1000.0);
         relayPWM.SetDutyCycle(0.0f);
         (void)relayPWM.ForceOff();
-    } else if (output > 0) {
-        double pwmValue = std::min(output / 100, 1.0);
+    } else if (effectiveOutput > 0) {
+        double pwmValue = std::min(effectiveOutput / 100, 1.0);
         relayPWM.SetDutyCycle(static_cast<float>(pwmValue));
         ApplyDoorTargetAngle(GetDoorClosedAngleDeg(), TICK_INTERVAL_MS / 1000.0);
     } else {
@@ -583,6 +661,7 @@ esp_err_t Controller::PerformOnNotRunning() {
     {
         ScopedLock lock(stateMutex);
         PIDOutput = 0.0;
+        coolingDoorEnabled = false;
         localDoorOpen = doorOpen;
         localDoorPreviewActive = doorPreviewActive;
         localDoorPreviewAngleDeg = doorPreviewAngleDeg;
@@ -935,6 +1014,37 @@ esp_err_t Controller::SetDoorMaxSpeedDegPerSec(double speedDegPerSec) {
         doorMaxSpeedDegPerSec = speedDegPerSec;
     }
 
+    return ESP_OK;
+}
+
+esp_err_t Controller::SetCoolingDoorBands(double newCoolOnBandC, double newCoolOffBandC) {
+    if (newCoolOnBandC < 0.0 || newCoolOffBandC < 0.0 || newCoolOffBandC >= newCoolOnBandC) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    SettingsManager& settings = SettingsManager::getInstance();
+    esp_err_t err = ESP_OK;
+    const double currentOnBand = settings.GetCoolOnBandC();
+    if (newCoolOffBandC < currentOnBand) {
+        err = settings.SetCoolOffBandC(newCoolOffBandC);
+        if (err == ESP_OK) {
+            err = settings.SetCoolOnBandC(newCoolOnBandC);
+        }
+    } else {
+        err = settings.SetCoolOnBandC(newCoolOnBandC);
+        if (err == ESP_OK) {
+            err = settings.SetCoolOffBandC(newCoolOffBandC);
+        }
+    }
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    {
+        ScopedLock lock(stateMutex);
+        coolOnBandC = newCoolOnBandC;
+        coolOffBandC = newCoolOffBandC;
+    }
     return ESP_OK;
 }
 

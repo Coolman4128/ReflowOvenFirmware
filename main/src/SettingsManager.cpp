@@ -146,10 +146,13 @@ esp_err_t SettingsManager::LoadSettings() {
     // ==ADD LOADING FOR EACH SETTING HERE ==
     // ======================================
 
-    esp_err_t err = this->nvs_get_double(m_handle, KEY_PROPORTIONAL_GAIN, &proportionalGain);
+    esp_err_t err = this->nvs_get_double(m_handle, KEY_HEAT_KP, &heatingProportionalGain);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        err = this->nvs_get_double(m_handle, KEY_PROPORTIONAL_GAIN, &heatingProportionalGain);
+    }
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
         // If the error is ESP_ERR_NVS_NOT_FOUND, it just means this setting hasn't been saved before, so we can ignore that error and keep the default value.
-        return err; 
+        return err;
     }
 
     err = this->nvs_get_double(m_handle, KEY_INPUT_FILTER_TIME, &inputFilterTime);
@@ -162,12 +165,33 @@ esp_err_t SettingsManager::LoadSettings() {
         return err;
     }
 
-    err = this->nvs_get_double(m_handle, KEY_INTEGRAL_GAIN, &integralGain);
+    err = this->nvs_get_double(m_handle, KEY_HEAT_KI, &heatingIntegralGain);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        err = this->nvs_get_double(m_handle, KEY_INTEGRAL_GAIN, &heatingIntegralGain);
+    }
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
         return err;
     }
 
-    err = this->nvs_get_double(m_handle, KEY_DERIVATIVE_GAIN, &derivativeGain);
+    err = this->nvs_get_double(m_handle, KEY_HEAT_KD, &heatingDerivativeGain);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        err = this->nvs_get_double(m_handle, KEY_DERIVATIVE_GAIN, &heatingDerivativeGain);
+    }
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    err = this->nvs_get_double(m_handle, KEY_COOL_KP, &coolingProportionalGain);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    err = this->nvs_get_double(m_handle, KEY_COOL_KI, &coolingIntegralGain);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    err = this->nvs_get_double(m_handle, KEY_COOL_KD, &coolingDerivativeGain);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
         return err;
     }
@@ -179,6 +203,20 @@ esp_err_t SettingsManager::LoadSettings() {
 
     err = this->nvs_get_double(m_handle, KEY_SETPOINT_WEIGHT, &setpointWeight);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    err = this->nvs_get_double(m_handle, KEY_I_ZONE_C, &integralZoneC);
+    if (err == ESP_OK) {
+        integralZoneC = std::max(integralZoneC, 0.0);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    err = this->nvs_get_double(m_handle, KEY_I_LEAK_S, &integralLeakTimeSeconds);
+    if (err == ESP_OK) {
+        integralLeakTimeSeconds = std::max(integralLeakTimeSeconds, 0.0);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
         return err;
     }
 
@@ -276,6 +314,25 @@ esp_err_t SettingsManager::LoadSettings() {
         return err;
     }
 
+    err = this->nvs_get_double(m_handle, KEY_COOL_ON_BAND, &coolOnBandC);
+    if (err == ESP_OK) {
+        coolOnBandC = std::max(coolOnBandC, 0.0);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    err = this->nvs_get_double(m_handle, KEY_COOL_OFF_BAND, &coolOffBandC);
+    if (err == ESP_OK) {
+        coolOffBandC = std::max(coolOffBandC, 0.0);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    if (coolOffBandC >= coolOnBandC) {
+        coolOnBandC = 5.0;
+        coolOffBandC = 2.0;
+    }
+
     return ESP_OK;
 }
 
@@ -289,19 +346,58 @@ esp_err_t SettingsManager::SetInputsIncludedMask(uint8_t newValue) {
     return NVS_Set_U8(KEY_INPUTS_INCLUDED, inputsIncludedMask);
 }
 
+esp_err_t SettingsManager::SetHeatingProportionalGain(double newValue) {
+    heatingProportionalGain = newValue;
+    esp_err_t err = NVS_Set_Double(KEY_HEAT_KP, heatingProportionalGain);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return NVS_Set_Double(KEY_PROPORTIONAL_GAIN, heatingProportionalGain);
+}
+
+esp_err_t SettingsManager::SetHeatingIntegralGain(double newValue) {
+    heatingIntegralGain = newValue;
+    esp_err_t err = NVS_Set_Double(KEY_HEAT_KI, heatingIntegralGain);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return NVS_Set_Double(KEY_INTEGRAL_GAIN, heatingIntegralGain);
+}
+
+esp_err_t SettingsManager::SetHeatingDerivativeGain(double newValue) {
+    heatingDerivativeGain = newValue;
+    esp_err_t err = NVS_Set_Double(KEY_HEAT_KD, heatingDerivativeGain);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return NVS_Set_Double(KEY_DERIVATIVE_GAIN, heatingDerivativeGain);
+}
+
+esp_err_t SettingsManager::SetCoolingProportionalGain(double newValue) {
+    coolingProportionalGain = newValue;
+    return NVS_Set_Double(KEY_COOL_KP, coolingProportionalGain);
+}
+
+esp_err_t SettingsManager::SetCoolingIntegralGain(double newValue) {
+    coolingIntegralGain = newValue;
+    return NVS_Set_Double(KEY_COOL_KI, coolingIntegralGain);
+}
+
+esp_err_t SettingsManager::SetCoolingDerivativeGain(double newValue) {
+    coolingDerivativeGain = newValue;
+    return NVS_Set_Double(KEY_COOL_KD, coolingDerivativeGain);
+}
+
 esp_err_t SettingsManager::SetProportionalGain(double newValue) {
-    proportionalGain = newValue;
-    return NVS_Set_Double(KEY_PROPORTIONAL_GAIN, proportionalGain);
+    return SetHeatingProportionalGain(newValue);
 }
 
 esp_err_t SettingsManager::SetIntegralGain(double newValue) {
-    integralGain = newValue;
-    return NVS_Set_Double(KEY_INTEGRAL_GAIN, integralGain);
+    return SetHeatingIntegralGain(newValue);
 }
 
 esp_err_t SettingsManager::SetDerivativeGain(double newValue) {
-    derivativeGain = newValue;
-    return NVS_Set_Double(KEY_DERIVATIVE_GAIN, derivativeGain);
+    return SetHeatingDerivativeGain(newValue);
 }
 
 esp_err_t SettingsManager::SetDerivativeFilterTime(double newValue) {
@@ -312,6 +408,22 @@ esp_err_t SettingsManager::SetDerivativeFilterTime(double newValue) {
 esp_err_t SettingsManager::SetSetpointWeight(double newValue) {
     setpointWeight = newValue;
     return NVS_Set_Double(KEY_SETPOINT_WEIGHT, setpointWeight);
+}
+
+esp_err_t SettingsManager::SetIntegralZoneC(double newValue) {
+    if (newValue < 0.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    integralZoneC = newValue;
+    return NVS_Set_Double(KEY_I_ZONE_C, integralZoneC);
+}
+
+esp_err_t SettingsManager::SetIntegralLeakTimeSeconds(double newValue) {
+    if (newValue < 0.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    integralLeakTimeSeconds = newValue;
+    return NVS_Set_Double(KEY_I_LEAK_S, integralLeakTimeSeconds);
 }
 
 esp_err_t SettingsManager::SetRelaysPWMMask(uint8_t newValue) {
@@ -403,4 +515,20 @@ esp_err_t SettingsManager::SetDoorMaxSpeedDegPerSec(double newValue) {
     }
     doorMaxSpeedDegPerSec = newValue;
     return NVS_Set_Double(KEY_DOOR_MAX_SPEED, doorMaxSpeedDegPerSec);
+}
+
+esp_err_t SettingsManager::SetCoolOnBandC(double newValue) {
+    if (newValue < 0.0 || newValue <= coolOffBandC) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    coolOnBandC = newValue;
+    return NVS_Set_Double(KEY_COOL_ON_BAND, coolOnBandC);
+}
+
+esp_err_t SettingsManager::SetCoolOffBandC(double newValue) {
+    if (newValue < 0.0 || newValue >= coolOnBandC) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    coolOffBandC = newValue;
+    return NVS_Set_Double(KEY_COOL_OFF_BAND, coolOffBandC);
 }

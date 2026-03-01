@@ -135,11 +135,23 @@ export interface HistoryPoint {
 
 export interface ControllerConfig {
   pid: {
-    kp: number;
-    ki: number;
-    kd: number;
+    kp: number; // legacy alias for heating.kp
+    ki: number; // legacy alias for heating.ki
+    kd: number; // legacy alias for heating.kd
+    heating: {
+      kp: number;
+      ki: number;
+      kd: number;
+    };
+    cooling: {
+      kp: number;
+      ki: number;
+      kd: number;
+    };
     derivative_filter_s: number;
     setpoint_weight: number;
+    integral_zone_c: number;
+    integral_leak_s: number;
   };
   input_filter_ms: number;
   inputs: number[];
@@ -155,5 +167,9 @@ export interface ControllerConfig {
     closed_angle_deg: number;
     open_angle_deg: number;
     max_speed_deg_per_s: number;
+  };
+  cooling: {
+    cool_on_band_c: number;
+    cool_off_band_c: number;
   };
 }

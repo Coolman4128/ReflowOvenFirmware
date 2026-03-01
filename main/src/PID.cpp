@@ -1,5 +1,6 @@
 #include "PID.hpp"
 #include <algorithm>
+#include <cmath>
 #include "esp_timer.h"
 
 esp_err_t PID::Reset() {
@@ -7,6 +8,9 @@ esp_err_t PID::Reset() {
     previousError = 0.0;
     dFiltered = 0.0;
     previousOutput = 0.0;
+    previousP = 0.0;
+    previousI = 0.0;
+    previousD = 0.0;
     firstRun = true;
     lastTimeUs = 0;
     previousPV = 0.0;
@@ -23,30 +27,27 @@ double PID::Calculate(double setPoint, double processValue) {
         }
         return pTerm;
     };
-    
-    if (firstRun) {
-        const double error = setPoint - processValue;
-        const double errorWeighted = (setpointWeight * setPoint) - processValue;
-        previousError = error;
-        previousPV = processValue;
-        previousP = clampPTermToBand(Kp * errorWeighted, error);
-        previousI = 0.0;
-        previousD = 0.0;
-        previousOutput = std::clamp(previousP, OutputMin, OutputMax);
-        firstRun = false;
-        lastTimeUs = esp_timer_get_time();
-        return previousOutput; // First run has no valid derivative term yet
-    }
 
     const int64_t nowUs = esp_timer_get_time();
-    double dt = (nowUs - lastTimeUs) / 1e6; // Convert microseconds to seconds
-    lastTimeUs = nowUs;
-    if (dt <= 0.0) {
-        dt = 1e-6;
+    double dt = 1e-6;
+    if (!firstRun) {
+        dt = (nowUs - lastTimeUs) / 1e6; // Convert microseconds to seconds
+        if (dt <= 0.0) {
+            dt = 1e-6;
+        }
     }
+    lastTimeUs = nowUs;
 
     const double error = setPoint - processValue;
     const double errorWeighted = (setpointWeight * setPoint) - processValue;
+
+    const bool wasFirstRun = firstRun;
+    if (wasFirstRun) {
+        previousError = error;
+        previousPV = processValue;
+        dFiltered = 0.0;
+        firstRun = false;
+    }
 
     if (derivativeFilterTime > 0.0) {
         DerivativeFilterAlpha = dt / (derivativeFilterTime + dt);
@@ -54,32 +55,54 @@ double PID::Calculate(double setPoint, double processValue) {
         DerivativeFilterAlpha = 1.0;
     }
 
-    const double derivative = -1 * (processValue - previousPV) / dt;
+    const double derivative = (wasFirstRun ? 0.0 : (-1.0 * (processValue - previousPV) / dt));
     previousPV = processValue;
 
     // Apply derivative filtering
-    dFiltered = DerivativeFilterAlpha * derivative + (1 - DerivativeFilterAlpha) * dFiltered;
+    dFiltered = DerivativeFilterAlpha * derivative + (1.0 - DerivativeFilterAlpha) * dFiltered;
 
-    const double pTerm = clampPTermToBand(Kp * errorWeighted, error);
-    const double dTerm = Kd * dFiltered;
+    const double pTermHeat = clampPTermToBand(heatingKp * errorWeighted, error);
+    const double dTermHeat = heatingKd * dFiltered;
+
+    const double pTermCool = clampPTermToBand(coolingKp * errorWeighted, error);
+    const double dTermCool = coolingKd * dFiltered;
+    const double outputNoICool = pTermCool + dTermCool;
+
+    // Explicit asymmetric mode handling:
+    // If cooling P+D is asking for a negative command, run in cooling gain set.
+    const bool coolingMode = (outputNoICool < 0.0);
+    const double activeKi = coolingMode ? coolingKi : heatingKi;
+    const double pTerm = coolingMode ? pTermCool : pTermHeat;
+    const double dTerm = coolingMode ? dTermCool : dTermHeat;
     const double outputNoI = pTerm + dTerm;
 
-    // Conditional integration anti-windup:
-    // Integrate only if it helps move saturated output back toward the linear region.
-    const double integralCandidate = integral + error * dt;
-    const double outputICandidate = Ki * integralCandidate;
-    const double outputCandidate = outputNoI + outputICandidate;
-
-    const bool saturatingHigh = (outputCandidate > OutputMax);
-    const bool saturatingLow = (outputCandidate < OutputMin);
-    const bool drivesFurtherIntoHighSat = saturatingHigh && ((error * Ki) > 0.0);
-    const bool drivesFurtherIntoLowSat = saturatingLow && ((error * Ki) < 0.0);
-
-    if (!(drivesFurtherIntoHighSat || drivesFurtherIntoLowSat)) {
-        integral = integralCandidate;
+    if (integralLeakTimeSeconds > 0.0) {
+        integral *= std::exp(-dt / integralLeakTimeSeconds);
     }
 
-    const double iTerm = Ki * integral;
+    const bool inIZone = (integralZoneC <= 0.0) || (std::abs(error) <= integralZoneC);
+    if (activeKi > 0.0 && inIZone) {
+        const double integralCandidate = integral + error * dt;
+
+        // During cooling request (negative P+D), only allow integral updates that move toward zero.
+        if (outputNoI < 0.0) {
+            if (std::abs(integralCandidate) < std::abs(integral)) {
+                integral = integralCandidate;
+            }
+        } else {
+            integral = integralCandidate;
+        }
+    }
+
+    double iTerm = 0.0;
+    if (activeKi > 0.0) {
+        iTerm = activeKi * integral;
+        const double iMin = OutputMin - outputNoI;
+        const double iMax = OutputMax - outputNoI;
+        iTerm = std::clamp(iTerm, iMin, iMax);
+        integral = iTerm / activeKi;
+    }
+
     const double output = std::clamp(outputNoI + iTerm, OutputMin, OutputMax);
 
     previousError = error;
@@ -92,9 +115,20 @@ double PID::Calculate(double setPoint, double processValue) {
 }
 
 esp_err_t PID::Tune(double Kp, double Ki, double Kd) {
-    this->Kp = Kp;
-    this->Ki = Ki;
-    this->Kd = Kd;
+    return TuneHeating(Kp, Ki, Kd);
+}
+
+esp_err_t PID::TuneHeating(double Kp, double Ki, double Kd) {
+    heatingKp = Kp;
+    heatingKi = Ki;
+    heatingKd = Kd;
+    return ESP_OK;
+}
+
+esp_err_t PID::TuneCooling(double Kp, double Ki, double Kd) {
+    coolingKp = Kp;
+    coolingKi = Ki;
+    coolingKd = Kd;
     return ESP_OK;
 }
 
@@ -120,5 +154,21 @@ esp_err_t PID::SetSetpointWeight(double weight) {
         return ESP_ERR_INVALID_ARG;
     }
     setpointWeight = weight;
+    return ESP_OK;
+}
+
+esp_err_t PID::SetIntegralZoneC(double zoneC) {
+    if (zoneC < 0.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    integralZoneC = zoneC;
+    return ESP_OK;
+}
+
+esp_err_t PID::SetIntegralLeakTimeSeconds(double leakTimeSeconds) {
+    if (leakTimeSeconds < 0.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    integralLeakTimeSeconds = leakTimeSeconds;
     return ESP_OK;
 }

@@ -33,13 +33,47 @@ export function ControllerSettingsPage({ onBack }: Props) {
 
   const refresh = async () => {
     const value = await api.getControllerConfig();
+
+    const heatingKp = Number.isFinite(value.pid.heating?.kp) ? value.pid.heating.kp : value.pid.kp;
+    const heatingKi = Number.isFinite(value.pid.heating?.ki) ? value.pid.heating.ki : value.pid.ki;
+    const heatingKd = Number.isFinite(value.pid.heating?.kd) ? value.pid.heating.kd : value.pid.kd;
+    const coolingKp = Number.isFinite(value.pid.cooling?.kp) ? value.pid.cooling.kp : heatingKp;
+    const coolingKi = Number.isFinite(value.pid.cooling?.ki) ? value.pid.cooling.ki : 0;
+    const coolingKd = Number.isFinite(value.pid.cooling?.kd) ? value.pid.cooling.kd : heatingKd;
+
+    const coolOnBand = Number.isFinite(value.cooling?.cool_on_band_c) ? Math.max(0, value.cooling.cool_on_band_c) : 5;
+    let coolOffBand = Number.isFinite(value.cooling?.cool_off_band_c) ? Math.max(0, value.cooling.cool_off_band_c) : 2;
+    if (coolOffBand >= coolOnBand) {
+      coolOffBand = Math.max(0, coolOnBand - 0.1);
+    }
+
     setConfig({
       ...value,
       pid: {
         ...value.pid,
-        setpoint_weight: Number.isFinite(value.pid.setpoint_weight) ? value.pid.setpoint_weight : 0.5
+        kp: heatingKp,
+        ki: heatingKi,
+        kd: heatingKd,
+        heating: {
+          kp: heatingKp,
+          ki: heatingKi,
+          kd: heatingKd
+        },
+        cooling: {
+          kp: coolingKp,
+          ki: coolingKi,
+          kd: coolingKd
+        },
+        setpoint_weight: Number.isFinite(value.pid.setpoint_weight) ? value.pid.setpoint_weight : 0.5,
+        integral_zone_c: Number.isFinite(value.pid.integral_zone_c) ? Math.max(0, value.pid.integral_zone_c) : 0,
+        integral_leak_s: Number.isFinite(value.pid.integral_leak_s) ? Math.max(0, value.pid.integral_leak_s) : 0
+      },
+      cooling: {
+        cool_on_band_c: coolOnBand,
+        cool_off_band_c: coolOffBand
       }
     });
+
     setInputsCsv(value.inputs.join(','));
     setPwmRelaysCsv(value.relays.pwm_relays.join(','));
     setRunningRelaysCsv(value.relays.running_relays.join(','));
@@ -62,6 +96,12 @@ export function ControllerSettingsPage({ onBack }: Props) {
   const savePid = async () => {
     if (!config) return;
     await api.updatePid(config.pid);
+    await refresh();
+  };
+
+  const saveCooling = async () => {
+    if (!config) return;
+    await api.updateCoolingConfig(config.cooling);
     await refresh();
   };
 
@@ -99,19 +139,82 @@ export function ControllerSettingsPage({ onBack }: Props) {
       </div>
 
       <section className="card">
-        <h3 className="section-title">PID (Separate)</h3>
+        <h3 className="section-title">PID Modes</h3>
         <div className="grid two">
           <div>
-            <label className="label">Kp</label>
-            <input className="input" type="number" value={config.pid.kp} onChange={(e) => setConfig({ ...config, pid: { ...config.pid, kp: Number(e.target.value) } })} />
+            <label className="label">Heat Kp</label>
+            <input
+              className="input"
+              type="number"
+              value={config.pid.heating.kp}
+              onChange={(e) => setConfig({
+                ...config,
+                pid: {
+                  ...config.pid,
+                  kp: Number(e.target.value),
+                  heating: { ...config.pid.heating, kp: Number(e.target.value) }
+                }
+              })}
+            />
           </div>
           <div>
-            <label className="label">Ki</label>
-            <input className="input" type="number" value={config.pid.ki} onChange={(e) => setConfig({ ...config, pid: { ...config.pid, ki: Number(e.target.value) } })} />
+            <label className="label">Heat Ki</label>
+            <input
+              className="input"
+              type="number"
+              value={config.pid.heating.ki}
+              onChange={(e) => setConfig({
+                ...config,
+                pid: {
+                  ...config.pid,
+                  ki: Number(e.target.value),
+                  heating: { ...config.pid.heating, ki: Number(e.target.value) }
+                }
+              })}
+            />
           </div>
           <div>
-            <label className="label">Kd</label>
-            <input className="input" type="number" value={config.pid.kd} onChange={(e) => setConfig({ ...config, pid: { ...config.pid, kd: Number(e.target.value) } })} />
+            <label className="label">Heat Kd</label>
+            <input
+              className="input"
+              type="number"
+              value={config.pid.heating.kd}
+              onChange={(e) => setConfig({
+                ...config,
+                pid: {
+                  ...config.pid,
+                  kd: Number(e.target.value),
+                  heating: { ...config.pid.heating, kd: Number(e.target.value) }
+                }
+              })}
+            />
+          </div>
+          <div>
+            <label className="label">Cool Kp</label>
+            <input
+              className="input"
+              type="number"
+              value={config.pid.cooling.kp}
+              onChange={(e) => setConfig({ ...config, pid: { ...config.pid, cooling: { ...config.pid.cooling, kp: Number(e.target.value) } } })}
+            />
+          </div>
+          <div>
+            <label className="label">Cool Ki</label>
+            <input
+              className="input"
+              type="number"
+              value={config.pid.cooling.ki}
+              onChange={(e) => setConfig({ ...config, pid: { ...config.pid, cooling: { ...config.pid.cooling, ki: Number(e.target.value) } } })}
+            />
+          </div>
+          <div>
+            <label className="label">Cool Kd</label>
+            <input
+              className="input"
+              type="number"
+              value={config.pid.cooling.kd}
+              onChange={(e) => setConfig({ ...config, pid: { ...config.pid, cooling: { ...config.pid.cooling, kd: Number(e.target.value) } } })}
+            />
           </div>
           <div>
             <label className="label">Derivative Filter (s)</label>
@@ -129,8 +232,62 @@ export function ControllerSettingsPage({ onBack }: Props) {
               onChange={(e) => setConfig({ ...config, pid: { ...config.pid, setpoint_weight: Number(e.target.value) } })}
             />
           </div>
+          <div>
+            <label className="label">I Zone (C)</label>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              step="0.1"
+              value={config.pid.integral_zone_c}
+              onChange={(e) => setConfig({ ...config, pid: { ...config.pid, integral_zone_c: Number(e.target.value) } })}
+            />
+          </div>
+          <div>
+            <label className="label">Integrator Leak Time (s, 0=off)</label>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              step="0.1"
+              value={config.pid.integral_leak_s}
+              onChange={(e) => setConfig({ ...config, pid: { ...config.pid, integral_leak_s: Number(e.target.value) } })}
+            />
+          </div>
         </div>
         <button className="primary" style={{ marginTop: '0.75rem' }} onClick={savePid}>Save PID</button>
+      </section>
+
+      <section className="card">
+        <h3 className="section-title">Cooling Door Hysteresis</h3>
+        <div className="grid two">
+          <div>
+            <label className="label">Cool On Band (C above SP)</label>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              step="0.1"
+              value={config.cooling.cool_on_band_c}
+              onChange={(e) => setConfig({ ...config, cooling: { ...config.cooling, cool_on_band_c: Number(e.target.value) } })}
+            />
+          </div>
+          <div>
+            <label className="label">Cool Off Band (C above SP)</label>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              step="0.1"
+              value={config.cooling.cool_off_band_c}
+              onChange={(e) => setConfig({ ...config, cooling: { ...config.cooling, cool_off_band_c: Number(e.target.value) } })}
+            />
+          </div>
+        </div>
+        <div className="muted" style={{ marginTop: '0.5rem' }}>
+          Cooling enables when PV {`>`} SP + On Band and disables when PV {`<`} SP + Off Band. Off band must be lower than on band.
+        </div>
+        <button className="primary" style={{ marginTop: '0.75rem' }} onClick={saveCooling}>Save Cooling Bands</button>
       </section>
 
       <section className="card">

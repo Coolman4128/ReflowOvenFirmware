@@ -24,13 +24,28 @@ class SettingsManager {
         uint8_t GetInputsIncludedMask() const { return inputsIncludedMask; }
         esp_err_t SetInputsIncludedMask(uint8_t newValue);
 
-        double GetProportionalGain() const { return proportionalGain; }
+        double GetHeatingProportionalGain() const { return heatingProportionalGain; }
+        esp_err_t SetHeatingProportionalGain(double newValue);
+        double GetHeatingIntegralGain() const { return heatingIntegralGain; }
+        esp_err_t SetHeatingIntegralGain(double newValue);
+        double GetHeatingDerivativeGain() const { return heatingDerivativeGain; }
+        esp_err_t SetHeatingDerivativeGain(double newValue);
+
+        double GetCoolingProportionalGain() const { return coolingProportionalGain; }
+        esp_err_t SetCoolingProportionalGain(double newValue);
+        double GetCoolingIntegralGain() const { return coolingIntegralGain; }
+        esp_err_t SetCoolingIntegralGain(double newValue);
+        double GetCoolingDerivativeGain() const { return coolingDerivativeGain; }
+        esp_err_t SetCoolingDerivativeGain(double newValue);
+
+        // Backward-compatible aliases mapped to heating gains.
+        double GetProportionalGain() const { return heatingProportionalGain; }
         esp_err_t SetProportionalGain(double newValue);
 
-        double GetIntegralGain() const { return integralGain; }
+        double GetIntegralGain() const { return heatingIntegralGain; }
         esp_err_t SetIntegralGain(double newValue);
 
-        double GetDerivativeGain() const { return derivativeGain; }
+        double GetDerivativeGain() const { return heatingDerivativeGain; }
         esp_err_t SetDerivativeGain(double newValue);
 
         double GetDerivativeFilterTime() const { return derivativeFilterTime; }
@@ -38,6 +53,12 @@ class SettingsManager {
 
         double GetSetpointWeight() const { return setpointWeight; }
         esp_err_t SetSetpointWeight(double newValue);
+
+        double GetIntegralZoneC() const { return integralZoneC; }
+        esp_err_t SetIntegralZoneC(double newValue);
+
+        double GetIntegralLeakTimeSeconds() const { return integralLeakTimeSeconds; }
+        esp_err_t SetIntegralLeakTimeSeconds(double newValue);
 
         uint8_t GetRelaysPWMMask() const { return relaysPWMMask; }
         esp_err_t SetRelaysPWMMask(uint8_t newValue);
@@ -73,6 +94,12 @@ class SettingsManager {
         double GetDoorMaxSpeedDegPerSec() const { return doorMaxSpeedDegPerSec; }
         esp_err_t SetDoorMaxSpeedDegPerSec(double newValue);
 
+        double GetCoolOnBandC() const { return coolOnBandC; }
+        esp_err_t SetCoolOnBandC(double newValue);
+
+        double GetCoolOffBandC() const { return coolOffBandC; }
+        esp_err_t SetCoolOffBandC(double newValue);
+
     private:
         // NVS helper variables
         constexpr static const char* NVS_PARTITION = "nvs";
@@ -105,8 +132,16 @@ class SettingsManager {
         constexpr static const char* KEY_PROPORTIONAL_GAIN = "prop_gain";
         constexpr static const char* KEY_INTEGRAL_GAIN = "int_gain";
         constexpr static const char* KEY_DERIVATIVE_GAIN = "der_gain";
+        constexpr static const char* KEY_HEAT_KP = "heat_kp";
+        constexpr static const char* KEY_HEAT_KI = "heat_ki";
+        constexpr static const char* KEY_HEAT_KD = "heat_kd";
+        constexpr static const char* KEY_COOL_KP = "cool_kp";
+        constexpr static const char* KEY_COOL_KI = "cool_ki";
+        constexpr static const char* KEY_COOL_KD = "cool_kd";
         constexpr static const char* KEY_DERIV_FILTER_TIME = "der_filt_t";
         constexpr static const char* KEY_SETPOINT_WEIGHT = "sp_weight";
+        constexpr static const char* KEY_I_ZONE_C = "i_zone_c";
+        constexpr static const char* KEY_I_LEAK_S = "i_leak_s";
         constexpr static const char* KEY_RELAYS_PWM = "rel_pwm";
         constexpr static const char* KEY_RELAYS_ON = "rel_on";
         constexpr static const char* KEY_TIMEZONE = "timezone";
@@ -117,14 +152,21 @@ class SettingsManager {
         constexpr static const char* KEY_DOOR_CLOSED_ANGLE = "door_clsd";
         constexpr static const char* KEY_DOOR_OPEN_ANGLE = "door_open";
         constexpr static const char* KEY_DOOR_MAX_SPEED = "door_spd_dps";
+        constexpr static const char* KEY_COOL_ON_BAND = "cool_on_bnd";
+        constexpr static const char* KEY_COOL_OFF_BAND = "cool_off_bd";
 
         double inputFilterTime = 1000.0;
         uint8_t inputsIncludedMask = 0x01;
-        double proportionalGain = 15.0;
-        double integralGain = 2.0;
-        double derivativeGain = 0.0;
+        double heatingProportionalGain = 15.0;
+        double heatingIntegralGain = 2.0;
+        double heatingDerivativeGain = 0.0;
+        double coolingProportionalGain = 15.0;
+        double coolingIntegralGain = 0.0;
+        double coolingDerivativeGain = 0.0;
         double derivativeFilterTime = 0.0;
         double setpointWeight = 0.5;
+        double integralZoneC = 0.0;
+        double integralLeakTimeSeconds = 0.0;
         uint8_t relaysPWMMask = 0x03;
         std::array<double, 8> relayPWMWeights = {1.0, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
         uint8_t relaysOnMask = 0x04;
@@ -136,6 +178,8 @@ class SettingsManager {
         double doorClosedAngleDeg = 50.0;
         double doorOpenAngleDeg = 90.0;
         double doorMaxSpeedDegPerSec = 60.0;
+        double coolOnBandC = 5.0;
+        double coolOffBandC = 2.0;
 
 
 };

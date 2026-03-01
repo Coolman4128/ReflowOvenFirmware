@@ -37,6 +37,8 @@ class Controller{
         double GetDoorClosedAngleDeg() const;
         double GetDoorOpenAngleDeg() const;
         double GetDoorMaxSpeedDegPerSec() const;
+        double GetCoolOnBandC() const;
+        double GetCoolOffBandC() const;
         PID* GetPIDController() { return &pidController; }
         std::string GetStateTUI() const;
 
@@ -49,9 +51,13 @@ class Controller{
         esp_err_t SetSetPointFromProfile(double newSetPoint);
         void SetProfileSetpointLock(bool locked);
         esp_err_t SetInputFilterTime(double newFilterTimeMs);
+        esp_err_t SetHeatingPIDGains(double newKp, double newKi, double newKd);
+        esp_err_t SetCoolingPIDGains(double newKp, double newKi, double newKd);
         esp_err_t SetPIDGains(double newKp, double newKi, double newKd);
         esp_err_t SetDerivativeFilterTime(double newFilterTimeSeconds);
         esp_err_t SetSetpointWeight(double newWeight);
+        esp_err_t SetIntegralZoneC(double zoneC);
+        esp_err_t SetIntegralLeakTimeSeconds(double leakTimeSeconds);
         esp_err_t AddInputChannel(int channel);
         esp_err_t RemoveInputChannel(int channel);
         esp_err_t SetInputChannels(const std::vector<int>& channels);
@@ -64,6 +70,7 @@ class Controller{
         esp_err_t SetRelaysWhenRunning(const std::vector<int>& relayIndices);
         esp_err_t SetDoorCalibrationAngles(double closedAngleDeg, double openAngleDeg);
         esp_err_t SetDoorMaxSpeedDegPerSec(double speedDegPerSec);
+        esp_err_t SetCoolingDoorBands(double coolOnBandC, double coolOffBandC);
         esp_err_t SetDoorPreviewAngle(double angleDeg);
         esp_err_t ClearDoorPreview();
 
@@ -101,6 +108,9 @@ class Controller{
         double doorOpenAngleDeg = 90.0;
         double doorMaxSpeedDegPerSec = 60.0;
         double doorPreviewAngleDeg = 90.0;
+        double coolOnBandC = 5.0;
+        double coolOffBandC = 2.0;
+        bool coolingDoorEnabled = false;
 
         // Controller Tuning Settings
         double inputFilterTimeMs = 100.0;

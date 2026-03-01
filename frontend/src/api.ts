@@ -81,7 +81,21 @@ export const api = {
     body: JSON.stringify(payload)
   }),
   getControllerConfig: () => request<ControllerConfig>('/api/v1/controller/config'),
-  updatePid: (payload: { kp: number; ki: number; kd: number; derivative_filter_s: number; setpoint_weight: number }) => request<{}>('/api/v1/controller/config/pid', {
+  updatePid: (payload: {
+    kp: number;
+    ki: number;
+    kd: number;
+    heating: { kp: number; ki: number; kd: number };
+    cooling: { kp: number; ki: number; kd: number };
+    derivative_filter_s: number;
+    setpoint_weight: number;
+    integral_zone_c: number;
+    integral_leak_s: number;
+  }) => request<{}>('/api/v1/controller/config/pid', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  }),
+  updateCoolingConfig: (payload: { cool_on_band_c: number; cool_off_band_c: number }) => request<{}>('/api/v1/controller/config/cooling', {
     method: 'PUT',
     body: JSON.stringify(payload)
   }),
