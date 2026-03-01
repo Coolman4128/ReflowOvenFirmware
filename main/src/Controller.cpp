@@ -65,6 +65,10 @@ Controller::Controller()
     }
     SyncRelayPWMAccumulatorsLocked();
     ApplyRelaysOnMask(settings.GetRelaysOnMask());
+    doorClosedAngleDeg = std::clamp(settings.GetDoorClosedAngleDeg(), 0.0, 180.0);
+    doorOpenAngleDeg = std::clamp(settings.GetDoorOpenAngleDeg(), 0.0, 180.0);
+    doorMaxSpeedDegPerSec = std::clamp(settings.GetDoorMaxSpeedDegPerSec(), 1.0, 360.0);
+    doorPreviewAngleDeg = doorOpenAngleDeg;
 }
 
 double Controller::GetSetPoint() const {
@@ -140,6 +144,21 @@ std::vector<int> Controller::GetRelaysWhenRunning() const {
     return relaysWhenControllerRunning;
 }
 
+double Controller::GetDoorClosedAngleDeg() const {
+    ScopedLock lock(stateMutex);
+    return doorClosedAngleDeg;
+}
+
+double Controller::GetDoorOpenAngleDeg() const {
+    ScopedLock lock(stateMutex);
+    return doorOpenAngleDeg;
+}
+
+double Controller::GetDoorMaxSpeedDegPerSec() const {
+    ScopedLock lock(stateMutex);
+    return doorMaxSpeedDegPerSec;
+}
+
 esp_err_t Controller::RunTick() {
     esp_err_t err = Perform();
     if (err != ESP_OK) {
@@ -185,6 +204,7 @@ esp_err_t Controller::Start() {
     {
         ScopedLock lock(stateMutex);
         running = true;
+        doorPreviewActive = false;
         state = "Steady State";
     }
 
@@ -226,13 +246,21 @@ esp_err_t Controller::Stop() {
 
 esp_err_t Controller::OpenDoor() {
     ScopedLock lock(stateMutex);
+    if (running) {
+        return ESP_ERR_INVALID_STATE;
+    }
     doorOpen = true;
+    doorPreviewActive = false;
     return ESP_OK;
 }
 
 esp_err_t Controller::CloseDoor() {
     ScopedLock lock(stateMutex);
+    if (running) {
+        return ESP_ERR_INVALID_STATE;
+    }
     doorOpen = false;
+    doorPreviewActive = false;
     return ESP_OK;
 }
 
@@ -528,18 +556,18 @@ esp_err_t Controller::PerformOnRunning() {
 
     if (output < 0) {
         const double doorOpenFraction = ComputeCoolingDoorOpenFraction(output, processValueCopy);
-        const double angleFromPercent = 180.0 * doorOpenFraction;
-        HardwareManager::getInstance().setServoAngle(angleFromPercent);
+        const double angleFromPercent = ComputeDoorAngleFromFraction(doorOpenFraction);
+        ApplyDoorTargetAngle(angleFromPercent, TICK_INTERVAL_MS / 1000.0);
         relayPWM.SetDutyCycle(0.0f);
         (void)relayPWM.ForceOff();
     } else if (output > 0) {
         double pwmValue = std::min(output / 100, 1.0);
         relayPWM.SetDutyCycle(static_cast<float>(pwmValue));
-        HardwareManager::getInstance().setServoAngle(0);
+        ApplyDoorTargetAngle(GetDoorClosedAngleDeg(), TICK_INTERVAL_MS / 1000.0);
     } else {
         relayPWM.SetDutyCycle(0);
         (void)relayPWM.ForceOff();
-        HardwareManager::getInstance().setServoAngle(0);
+        ApplyDoorTargetAngle(GetDoorClosedAngleDeg(), TICK_INTERVAL_MS / 1000.0);
     }
 
     return ESP_OK;
@@ -547,18 +575,28 @@ esp_err_t Controller::PerformOnRunning() {
 
 esp_err_t Controller::PerformOnNotRunning() {
     bool localDoorOpen = false;
+    bool localDoorPreviewActive = false;
+    double localDoorPreviewAngleDeg = 0.0;
+    double localDoorClosedAngleDeg = 0.0;
+    double localDoorOpenAngleDeg = 0.0;
 
     {
         ScopedLock lock(stateMutex);
         PIDOutput = 0.0;
         localDoorOpen = doorOpen;
+        localDoorPreviewActive = doorPreviewActive;
+        localDoorPreviewAngleDeg = doorPreviewAngleDeg;
+        localDoorClosedAngleDeg = doorClosedAngleDeg;
+        localDoorOpenAngleDeg = doorOpenAngleDeg;
     }
 
     relayPWM.SetDutyCycle(0);
-    if (localDoorOpen) {
-        HardwareManager::getInstance().setServoAngle(180);
+    if (localDoorPreviewActive) {
+        ApplyDoorTargetAngle(localDoorPreviewAngleDeg, TICK_INTERVAL_MS / 1000.0);
+    } else if (localDoorOpen) {
+        ApplyDoorTargetAngle(localDoorOpenAngleDeg, TICK_INTERVAL_MS / 1000.0);
     } else {
-        HardwareManager::getInstance().setServoAngle(0);
+        ApplyDoorTargetAngle(localDoorClosedAngleDeg, TICK_INTERVAL_MS / 1000.0);
     }
 
     return ESP_OK;
@@ -843,6 +881,105 @@ esp_err_t Controller::SetRelaysWhenRunning(const std::vector<int>& relayIndices)
     return SettingsManager::getInstance().SetRelaysOnMask(BuildRelaysOnMask());
 }
 
+esp_err_t Controller::SetDoorCalibrationAngles(double closedAngleDeg, double openAngleDeg) {
+    if (closedAngleDeg < 0.0 || closedAngleDeg > 180.0 || openAngleDeg < 0.0 || openAngleDeg > 180.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    SettingsManager& settings = SettingsManager::getInstance();
+    esp_err_t err = settings.SetDoorClosedAngleDeg(closedAngleDeg);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = settings.SetDoorOpenAngleDeg(openAngleDeg);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    bool localRunning = false;
+    bool localDoorOpen = false;
+    double localTargetAngle = 0.0;
+    {
+        ScopedLock lock(stateMutex);
+        doorClosedAngleDeg = closedAngleDeg;
+        doorOpenAngleDeg = openAngleDeg;
+        localRunning = running;
+        localDoorOpen = doorOpen;
+        if (doorPreviewActive) {
+            doorPreviewAngleDeg = std::clamp(doorPreviewAngleDeg, 0.0, 180.0);
+            localTargetAngle = doorPreviewAngleDeg;
+        } else {
+            localTargetAngle = localDoorOpen ? openAngleDeg : closedAngleDeg;
+        }
+    }
+
+    if (localRunning) {
+        return ESP_OK;
+    }
+    ApplyDoorTargetAngle(localTargetAngle, TICK_INTERVAL_MS / 1000.0);
+    return ESP_OK;
+}
+
+esp_err_t Controller::SetDoorMaxSpeedDegPerSec(double speedDegPerSec) {
+    if (speedDegPerSec < 1.0 || speedDegPerSec > 360.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = SettingsManager::getInstance().SetDoorMaxSpeedDegPerSec(speedDegPerSec);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    {
+        ScopedLock lock(stateMutex);
+        doorMaxSpeedDegPerSec = speedDegPerSec;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t Controller::SetDoorPreviewAngle(double angleDeg) {
+    if (angleDeg < 0.0 || angleDeg > 180.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    {
+        ScopedLock lock(stateMutex);
+        if (running) {
+            return ESP_ERR_INVALID_STATE;
+        }
+        doorPreviewActive = true;
+        doorPreviewAngleDeg = angleDeg;
+    }
+
+    ApplyDoorTargetAngle(angleDeg, TICK_INTERVAL_MS / 1000.0);
+    return ESP_OK;
+}
+
+esp_err_t Controller::ClearDoorPreview() {
+    bool localRunning = false;
+    bool localDoorOpen = false;
+    double localClosedAngle = 0.0;
+    double localOpenAngle = 0.0;
+    {
+        ScopedLock lock(stateMutex);
+        if (running) {
+            return ESP_ERR_INVALID_STATE;
+        }
+        doorPreviewActive = false;
+        localRunning = running;
+        localDoorOpen = doorOpen;
+        localClosedAngle = doorClosedAngleDeg;
+        localOpenAngle = doorOpenAngleDeg;
+    }
+
+    if (localRunning) {
+        return ESP_OK;
+    }
+    ApplyDoorTargetAngle(localDoorOpen ? localOpenAngle : localClosedAngle, TICK_INTERVAL_MS / 1000.0);
+    return ESP_OK;
+}
+
 uint8_t Controller::BuildInputsMask() const {
     uint8_t mask = 0;
     ScopedLock lock(stateMutex);
@@ -960,4 +1097,39 @@ double Controller::ComputeCoolingDoorOpenFraction(double pidOutput, double proce
     // Door cooling is strongly nonlinear: small openings provide most of the effect.
     const double doorOpenFraction = 1.0 - std::pow(1.0 - compensatedDemand, 1.0 / DOOR_COOLING_NONLINEARITY);
     return std::clamp(doorOpenFraction, 0.0, 1.0);
+}
+
+double Controller::ComputeDoorAngleFromFraction(double openFraction) const {
+    const double clampedFraction = std::clamp(openFraction, 0.0, 1.0);
+    double closedAngle = 0.0;
+    double openAngle = 0.0;
+    {
+        ScopedLock lock(stateMutex);
+        closedAngle = doorClosedAngleDeg;
+        openAngle = doorOpenAngleDeg;
+    }
+
+    return closedAngle + clampedFraction * (openAngle - closedAngle);
+}
+
+void Controller::ApplyDoorTargetAngle(double targetAngle, double dtSeconds) {
+    const double clampedTarget = std::clamp(targetAngle, 0.0, 180.0);
+    const double safeDt = std::max(dtSeconds, 0.0);
+    double speedDegPerSec = 60.0;
+    {
+        ScopedLock lock(stateMutex);
+        speedDegPerSec = doorMaxSpeedDegPerSec;
+    }
+    speedDegPerSec = std::clamp(speedDegPerSec, 1.0, 360.0);
+
+    const double currentAngle = HardwareManager::getInstance().getServoAngle();
+    const double maxStep = speedDegPerSec * safeDt;
+    const double delta = clampedTarget - currentAngle;
+
+    double nextAngle = clampedTarget;
+    if (std::abs(delta) > maxStep) {
+        nextAngle = currentAngle + std::copysign(maxStep, delta);
+    }
+
+    (void)HardwareManager::getInstance().setServoAngle(nextAngle);
 }

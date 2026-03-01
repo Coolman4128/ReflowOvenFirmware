@@ -47,6 +47,13 @@ export const api = {
   getStatus: () => request<StatusData>('/api/v1/status'),
   startOven: () => request<{}>('/api/v1/control/start', { method: 'POST' }),
   stopOven: () => request<{}>('/api/v1/control/stop', { method: 'POST' }),
+  openDoor: () => request<{}>('/api/v1/control/door/open', { method: 'POST' }),
+  closeDoor: () => request<{}>('/api/v1/control/door/close', { method: 'POST' }),
+  previewDoorAngle: (angle_deg: number) => request<{}>('/api/v1/control/door/preview', {
+    method: 'POST',
+    body: JSON.stringify({ angle_deg })
+  }),
+  clearDoorPreview: () => request<{}>('/api/v1/control/door/preview', { method: 'DELETE' }),
   setSetpoint: (setpoint_c: number) => request<{}>('/api/v1/control/setpoint', {
     method: 'POST',
     body: JSON.stringify({ setpoint_c })
@@ -93,6 +100,10 @@ export const api = {
   ) => request<{}>('/api/v1/controller/config/relays', {
     method: 'PUT',
     body: JSON.stringify({ pwm_relays, running_relays, pwm_relay_weights })
+  }),
+  updateDoorCalibration: (payload: { closed_angle_deg: number; open_angle_deg: number; max_speed_deg_per_s: number }) => request<{}>('/api/v1/controller/config/door', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
   }),
   getProfilesIndex: () => request<{
     supports_execution: boolean;

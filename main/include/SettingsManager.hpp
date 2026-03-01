@@ -64,6 +64,15 @@ class SettingsManager {
         int32_t GetMaxDataLogTimeMs() const { return maxDataLogTimeMs; }
         esp_err_t SetMaxDataLogTimeMs(int32_t newValue);
 
+        double GetDoorClosedAngleDeg() const { return doorClosedAngleDeg; }
+        esp_err_t SetDoorClosedAngleDeg(double newValue);
+
+        double GetDoorOpenAngleDeg() const { return doorOpenAngleDeg; }
+        esp_err_t SetDoorOpenAngleDeg(double newValue);
+
+        double GetDoorMaxSpeedDegPerSec() const { return doorMaxSpeedDegPerSec; }
+        esp_err_t SetDoorMaxSpeedDegPerSec(double newValue);
+
     private:
         // NVS helper variables
         constexpr static const char* NVS_PARTITION = "nvs";
@@ -105,6 +114,9 @@ class SettingsManager {
         constexpr static const char* KEY_WIFI_PASSWORD = "wifi_pass";
         constexpr static const char* KEY_DATA_LOG_INTERVAL = "log_int_ms";
         constexpr static const char* KEY_MAX_DATA_LOG_TIME = "max_log_ms";
+        constexpr static const char* KEY_DOOR_CLOSED_ANGLE = "door_clsd";
+        constexpr static const char* KEY_DOOR_OPEN_ANGLE = "door_open";
+        constexpr static const char* KEY_DOOR_MAX_SPEED = "door_spd_dps";
 
         double inputFilterTime = 1000.0;
         uint8_t inputsIncludedMask = 0x01;
@@ -121,6 +133,9 @@ class SettingsManager {
         std::string wifiPassword = "TYLERSETUP";
         int32_t dataLogIntervalMs = 1000;
         int32_t maxDataLogTimeMs = 1000 * 60 * 30;
+        double doorClosedAngleDeg = 50.0;
+        double doorOpenAngleDeg = 90.0;
+        double doorMaxSpeedDegPerSec = 60.0;
 
 
 };

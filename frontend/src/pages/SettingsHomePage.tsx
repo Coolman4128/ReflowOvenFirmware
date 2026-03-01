@@ -1,7 +1,7 @@
-import { Clock3, Wifi, Database, SlidersHorizontal } from 'lucide-react';
+import { Clock3, Wifi, Database, SlidersHorizontal, DoorOpen } from 'lucide-react';
 
 interface Props {
-  onOpen: (page: 'settings-time' | 'settings-wifi' | 'settings-data' | 'settings-controller') => void;
+  onOpen: (page: 'settings-time' | 'settings-wifi' | 'settings-data' | 'settings-controller' | 'settings-door') => void;
 }
 
 export function SettingsHomePage({ onOpen }: Props) {
@@ -9,7 +9,8 @@ export function SettingsHomePage({ onOpen }: Props) {
     { id: 'settings-time' as const, label: 'Time', icon: Clock3 },
     { id: 'settings-wifi' as const, label: 'WiFi', icon: Wifi },
     { id: 'settings-data' as const, label: 'Data', icon: Database },
-    { id: 'settings-controller' as const, label: 'Controller', icon: SlidersHorizontal }
+    { id: 'settings-controller' as const, label: 'Controller', icon: SlidersHorizontal },
+    { id: 'settings-door' as const, label: 'Door', icon: DoorOpen }
   ];
 
   return (

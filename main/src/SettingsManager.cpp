@@ -254,7 +254,27 @@ esp_err_t SettingsManager::LoadSettings() {
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
         return err;
     }
-    
+
+    err = this->nvs_get_double(m_handle, KEY_DOOR_CLOSED_ANGLE, &doorClosedAngleDeg);
+    if (err == ESP_OK) {
+        doorClosedAngleDeg = std::clamp(doorClosedAngleDeg, 0.0, 180.0);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    err = this->nvs_get_double(m_handle, KEY_DOOR_OPEN_ANGLE, &doorOpenAngleDeg);
+    if (err == ESP_OK) {
+        doorOpenAngleDeg = std::clamp(doorOpenAngleDeg, 0.0, 180.0);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    err = this->nvs_get_double(m_handle, KEY_DOOR_MAX_SPEED, &doorMaxSpeedDegPerSec);
+    if (err == ESP_OK) {
+        doorMaxSpeedDegPerSec = std::clamp(doorMaxSpeedDegPerSec, 1.0, 360.0);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
 
     return ESP_OK;
 }
@@ -359,4 +379,28 @@ esp_err_t SettingsManager::SetDataLogIntervalMs(int32_t newValue) {
 esp_err_t SettingsManager::SetMaxDataLogTimeMs(int32_t newValue) {
     maxDataLogTimeMs = newValue;
     return NVS_Set_I32(KEY_MAX_DATA_LOG_TIME, maxDataLogTimeMs);
+}
+
+esp_err_t SettingsManager::SetDoorClosedAngleDeg(double newValue) {
+    if (newValue < 0.0 || newValue > 180.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    doorClosedAngleDeg = newValue;
+    return NVS_Set_Double(KEY_DOOR_CLOSED_ANGLE, doorClosedAngleDeg);
+}
+
+esp_err_t SettingsManager::SetDoorOpenAngleDeg(double newValue) {
+    if (newValue < 0.0 || newValue > 180.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    doorOpenAngleDeg = newValue;
+    return NVS_Set_Double(KEY_DOOR_OPEN_ANGLE, doorOpenAngleDeg);
+}
+
+esp_err_t SettingsManager::SetDoorMaxSpeedDegPerSec(double newValue) {
+    if (newValue < 1.0 || newValue > 360.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    doorMaxSpeedDegPerSec = newValue;
+    return NVS_Set_Double(KEY_DOOR_MAX_SPEED, doorMaxSpeedDegPerSec);
 }

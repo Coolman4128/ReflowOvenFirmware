@@ -151,4 +151,9 @@ export interface ControllerConfig {
     }>;
     running_relays: number[];
   };
+  door: {
+    closed_angle_deg: number;
+    open_angle_deg: number;
+    max_speed_deg_per_s: number;
+  };
 }

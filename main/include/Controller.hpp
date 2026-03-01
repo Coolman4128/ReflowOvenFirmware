@@ -34,6 +34,9 @@ class Controller{
         std::vector<int> GetRelaysPWMEnabled() const;
         std::unordered_map<int, double> GetRelaysPWMWeights() const;
         std::vector<int> GetRelaysWhenRunning() const;
+        double GetDoorClosedAngleDeg() const;
+        double GetDoorOpenAngleDeg() const;
+        double GetDoorMaxSpeedDegPerSec() const;
         PID* GetPIDController() { return &pidController; }
         std::string GetStateTUI() const;
 
@@ -59,6 +62,10 @@ class Controller{
         esp_err_t AddRelayWhenRunning(int relayIndex);
         esp_err_t RemoveRelayWhenRunning(int relayIndex);
         esp_err_t SetRelaysWhenRunning(const std::vector<int>& relayIndices);
+        esp_err_t SetDoorCalibrationAngles(double closedAngleDeg, double openAngleDeg);
+        esp_err_t SetDoorMaxSpeedDegPerSec(double speedDegPerSec);
+        esp_err_t SetDoorPreviewAngle(double angleDeg);
+        esp_err_t ClearDoorPreview();
 
 
 
@@ -80,7 +87,8 @@ class Controller{
         bool running = false;
         std::string state = "Idle";
         bool alarming = false;
-        bool doorOpen = false;
+        bool doorOpen = true;
+        bool doorPreviewActive = false;
         bool setpointLockedByProfile = false;
 
         // Controller Runtime properties
@@ -89,6 +97,10 @@ class Controller{
         double filteredProcessValue = 0.0;
         bool hasFilteredProcessValue = false;
         double PIDOutput = 0.0;
+        double doorClosedAngleDeg = 50.0;
+        double doorOpenAngleDeg = 90.0;
+        double doorMaxSpeedDegPerSec = 60.0;
+        double doorPreviewAngleDeg = 90.0;
 
         // Controller Tuning Settings
         double inputFilterTimeMs = 100.0;
@@ -117,6 +129,8 @@ class Controller{
         void SyncRelayPWMAccumulatorsLocked();
         esp_err_t PersistRelaysPWMSettings();
         double ComputeCoolingDoorOpenFraction(double pidOutput, double processValueC) const;
+        double ComputeDoorAngleFromFraction(double openFraction) const;
+        void ApplyDoorTargetAngle(double targetAngle, double dtSeconds);
 
 
         esp_err_t RunningRelaysOn();

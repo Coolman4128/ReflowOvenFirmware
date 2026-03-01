@@ -799,6 +799,12 @@ esp_err_t WebServerManager::HandleApiGet(httpd_req_t* req, const std::string& pa
         cJSON_AddItemToObject(relaysObj, "running_relays", runningRelays);
         cJSON_AddItemToObject(root, "relays", relaysObj);
 
+        cJSON* doorObj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(doorObj, "closed_angle_deg", controller.GetDoorClosedAngleDeg());
+        cJSON_AddNumberToObject(doorObj, "open_angle_deg", controller.GetDoorOpenAngleDeg());
+        cJSON_AddNumberToObject(doorObj, "max_speed_deg_per_s", controller.GetDoorMaxSpeedDegPerSec());
+        cJSON_AddItemToObject(root, "door", doorObj);
+
         return SendJsonSuccess(req, JsonStringFromObject(root));
     }
 
@@ -1003,6 +1009,56 @@ esp_err_t WebServerManager::HandleApiPost(httpd_req_t* req, const std::string& p
             return SendJsonError(req, 400, "SETPOINT_FAILED", esp_err_to_name(err));
         }
 
+        return SendJsonSuccess(req, "{}");
+    }
+
+    if (path == "/api/v1/control/door/open") {
+        esp_err_t err = Controller::getInstance().OpenDoor();
+        if (err == ESP_ERR_INVALID_STATE) {
+            return SendJsonError(req, 409, "DOOR_CONTROL_BLOCKED", "door control is only allowed while not running");
+        }
+        if (err != ESP_OK) {
+            return SendJsonError(req, 400, "DOOR_CONTROL_FAILED", esp_err_to_name(err));
+        }
+        return SendJsonSuccess(req, "{}");
+    }
+
+    if (path == "/api/v1/control/door/close") {
+        esp_err_t err = Controller::getInstance().CloseDoor();
+        if (err == ESP_ERR_INVALID_STATE) {
+            return SendJsonError(req, 409, "DOOR_CONTROL_BLOCKED", "door control is only allowed while not running");
+        }
+        if (err != ESP_OK) {
+            return SendJsonError(req, 400, "DOOR_CONTROL_FAILED", esp_err_to_name(err));
+        }
+        return SendJsonSuccess(req, "{}");
+    }
+
+    if (path == "/api/v1/control/door/preview") {
+        std::string body;
+        if (ReadRequestBody(req, body) != ESP_OK) {
+            return SendJsonError(req, 400, "BAD_BODY", "Failed to read request body");
+        }
+
+        cJSON* json = cJSON_Parse(body.c_str());
+        if (json == nullptr) {
+            return SendJsonError(req, 400, "BAD_JSON", "Invalid JSON");
+        }
+
+        cJSON* angleDeg = cJSON_GetObjectItem(json, "angle_deg");
+        if (!cJSON_IsNumber(angleDeg)) {
+            cJSON_Delete(json);
+            return SendJsonError(req, 400, "BAD_DOOR_PREVIEW_ARGS", "angle_deg is required numeric field");
+        }
+
+        esp_err_t err = Controller::getInstance().SetDoorPreviewAngle(angleDeg->valuedouble);
+        cJSON_Delete(json);
+        if (err == ESP_ERR_INVALID_STATE) {
+            return SendJsonError(req, 409, "DOOR_PREVIEW_BLOCKED", "door preview is only allowed while not running");
+        }
+        if (err != ESP_OK) {
+            return SendJsonError(req, 400, "DOOR_PREVIEW_FAILED", esp_err_to_name(err));
+        }
         return SendJsonSuccess(req, "{}");
     }
 
@@ -1313,11 +1369,43 @@ esp_err_t WebServerManager::HandleApiPut(httpd_req_t* req, const std::string& pa
         return SendJsonSuccess(req, "{}");
     }
 
+    if (path == "/api/v1/controller/config/door") {
+        cJSON* closedAngleDeg = cJSON_GetObjectItem(json, "closed_angle_deg");
+        cJSON* openAngleDeg = cJSON_GetObjectItem(json, "open_angle_deg");
+        cJSON* maxSpeedDegPerSec = cJSON_GetObjectItem(json, "max_speed_deg_per_s");
+        if (!cJSON_IsNumber(closedAngleDeg) || !cJSON_IsNumber(openAngleDeg) || !cJSON_IsNumber(maxSpeedDegPerSec)) {
+            cJSON_Delete(json);
+            return SendJsonError(req, 400, "BAD_DOOR_CONFIG_ARGS", "closed_angle_deg, open_angle_deg, and max_speed_deg_per_s are required numeric fields");
+        }
+
+        Controller& controller = Controller::getInstance();
+        esp_err_t err = controller.SetDoorCalibrationAngles(closedAngleDeg->valuedouble, openAngleDeg->valuedouble);
+        if (err == ESP_OK) {
+            err = controller.SetDoorMaxSpeedDegPerSec(maxSpeedDegPerSec->valuedouble);
+        }
+        cJSON_Delete(json);
+        if (err != ESP_OK) {
+            return SendJsonError(req, 400, "DOOR_CONFIG_UPDATE_FAILED", esp_err_to_name(err));
+        }
+        return SendJsonSuccess(req, "{}");
+    }
+
     cJSON_Delete(json);
     return SendJsonError(req, 404, "NOT_FOUND", "Endpoint not found");
 }
 
 esp_err_t WebServerManager::HandleApiDelete(httpd_req_t* req, const std::string& path) {
+    if (path == "/api/v1/control/door/preview") {
+        esp_err_t err = Controller::getInstance().ClearDoorPreview();
+        if (err == ESP_ERR_INVALID_STATE) {
+            return SendJsonError(req, 409, "DOOR_PREVIEW_BLOCKED", "door preview is only allowed while not running");
+        }
+        if (err != ESP_OK) {
+            return SendJsonError(req, 400, "DOOR_PREVIEW_CLEAR_FAILED", esp_err_to_name(err));
+        }
+        return SendJsonSuccess(req, "{}");
+    }
+
     if (path == "/api/v1/data/history") {
         esp_err_t err = DataManager::getInstance().ClearData();
         if (err != ESP_OK) {

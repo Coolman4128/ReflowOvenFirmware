@@ -6,7 +6,13 @@ const port = 8787;
 
 const state = {
   running: false,
-  doorOpen: false,
+  doorOpen: true,
+  doorPreviewActive: false,
+  doorPreviewAngle: 90,
+  doorClosedAngle: 50,
+  doorOpenAngle: 90,
+  doorMaxSpeedDegPerSec: 60,
+  servoAngle: 0,
   alarming: false,
   state: 'Idle',
   setpoint: 200,
@@ -80,7 +86,7 @@ function makeStatusData() {
     hardware: {
       temperatures_c: [state.process + 0.3, state.process - 0.4, state.process + 0.7, state.process - 0.1],
       relay_states: [state.running, state.running, false, false, false, false],
-      servo_angle: state.pid < 0 ? Math.min(180, Math.abs(state.pid) * 1.8) : 0
+      servo_angle: state.servoAngle
     },
     wifi: {
       connected: state.wifiConnected,
@@ -144,6 +150,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && path === '/api/v1/control/start') {
     state.running = true;
+    state.doorPreviewActive = false;
     state.state = 'Steady State';
     json(res, 200, envelope({}));
     return;
@@ -164,6 +171,45 @@ const server = http.createServer(async (req, res) => {
     state.running = false;
     state.state = 'Idle';
     state.pid = 0;
+    json(res, 200, envelope({}));
+    return;
+  }
+
+  if (req.method === 'POST' && path === '/api/v1/control/door/open') {
+    if (state.running) {
+      json(res, 409, errEnvelope('DOOR_CONTROL_BLOCKED', 'door control is only allowed while not running'));
+      return;
+    }
+    state.doorOpen = true;
+    state.doorPreviewActive = false;
+    json(res, 200, envelope({}));
+    return;
+  }
+
+  if (req.method === 'POST' && path === '/api/v1/control/door/close') {
+    if (state.running) {
+      json(res, 409, errEnvelope('DOOR_CONTROL_BLOCKED', 'door control is only allowed while not running'));
+      return;
+    }
+    state.doorOpen = false;
+    state.doorPreviewActive = false;
+    json(res, 200, envelope({}));
+    return;
+  }
+
+  if (req.method === 'POST' && path === '/api/v1/control/door/preview') {
+    if (state.running) {
+      json(res, 409, errEnvelope('DOOR_PREVIEW_BLOCKED', 'door preview is only allowed while not running'));
+      return;
+    }
+    const body = JSON.parse(await readBody(req));
+    const angle = Number(body.angle_deg);
+    if (!Number.isFinite(angle) || angle < 0 || angle > 180) {
+      json(res, 400, errEnvelope('BAD_DOOR_PREVIEW_ARGS', 'angle_deg is required numeric field'));
+      return;
+    }
+    state.doorPreviewActive = true;
+    state.doorPreviewAngle = angle;
     json(res, 200, envelope({}));
     return;
   }
@@ -258,6 +304,11 @@ const server = http.createServer(async (req, res) => {
           weight: Number(state.pwmRelayWeights[relay] ?? 1)
         })),
         running_relays: state.runningRelays
+      },
+      door: {
+        closed_angle_deg: state.doorClosedAngle,
+        open_angle_deg: state.doorOpenAngle,
+        max_speed_deg_per_s: state.doorMaxSpeedDegPerSec
       }
     }));
     return;
@@ -307,6 +358,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'PUT' && path === '/api/v1/controller/config/door') {
+    const body = JSON.parse(await readBody(req));
+    const closed = Number(body.closed_angle_deg);
+    const open = Number(body.open_angle_deg);
+    const maxSpeed = Number(body.max_speed_deg_per_s);
+    if (
+      !Number.isFinite(closed) || !Number.isFinite(open) || !Number.isFinite(maxSpeed)
+      || closed < 0 || closed > 180 || open < 0 || open > 180
+      || maxSpeed < 1 || maxSpeed > 360
+    ) {
+      json(res, 400, errEnvelope('BAD_DOOR_CONFIG_ARGS', 'closed_angle_deg, open_angle_deg, and max_speed_deg_per_s are required numeric fields'));
+      return;
+    }
+    state.doorClosedAngle = closed;
+    state.doorOpenAngle = open;
+    state.doorMaxSpeedDegPerSec = maxSpeed;
+    json(res, 200, envelope({}));
+    return;
+  }
+
   if (req.method === 'GET' && path === '/api/v1/data/history') {
     json(res, 200, envelope({ points: state.points.slice(-200) }));
     return;
@@ -314,6 +385,16 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'DELETE' && path === '/api/v1/data/history') {
     state.points = [];
+    json(res, 200, envelope({}));
+    return;
+  }
+
+  if (req.method === 'DELETE' && path === '/api/v1/control/door/preview') {
+    if (state.running) {
+      json(res, 409, errEnvelope('DOOR_PREVIEW_BLOCKED', 'door preview is only allowed while not running'));
+      return;
+    }
+    state.doorPreviewActive = false;
     json(res, 200, envelope({}));
     return;
   }
@@ -477,6 +558,28 @@ setInterval(() => {
   state.p = state.pid * 0.7;
   state.i = state.pid * 0.2;
   state.d = state.pid * 0.1;
+
+  let targetDoorAngle = state.doorClosedAngle;
+  if (state.running) {
+    if (state.pid < 0) {
+      const fraction = Math.min(1, Math.max(0, Math.abs(state.pid) / 100));
+      targetDoorAngle = state.doorClosedAngle + ((state.doorOpenAngle - state.doorClosedAngle) * fraction);
+    } else {
+      targetDoorAngle = state.doorClosedAngle;
+    }
+  } else if (state.doorPreviewActive) {
+    targetDoorAngle = state.doorPreviewAngle;
+  } else {
+    targetDoorAngle = state.doorOpen ? state.doorOpenAngle : state.doorClosedAngle;
+  }
+
+  const maxStep = state.doorMaxSpeedDegPerSec * 0.25;
+  const delta = targetDoorAngle - state.servoAngle;
+  if (Math.abs(delta) <= maxStep) {
+    state.servoAngle = targetDoorAngle;
+  } else {
+    state.servoAngle += Math.sign(delta) * maxStep;
+  }
 
   const sample = {
     timestamp: Date.now(),

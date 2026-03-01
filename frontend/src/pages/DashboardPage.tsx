@@ -4,12 +4,14 @@ import { StatusData } from '../types';
 interface Props {
   status: StatusData | null;
   onSetpoint: (value: number) => Promise<void>;
+  onToggleDoor: (open: boolean) => Promise<void>;
 }
 
-export function DashboardPage({ status, onSetpoint }: Props) {
+export function DashboardPage({ status, onSetpoint, onToggleDoor }: Props) {
   const degC = '\u00B0C';
   const [setpointInput, setSetpointInput] = useState('');
   const [saving, setSaving] = useState(false);
+  const [doorSaving, setDoorSaving] = useState(false);
 
   const controller = status?.controller;
   const hardware = status?.hardware;
@@ -31,6 +33,16 @@ export function DashboardPage({ status, onSetpoint }: Props) {
       setSetpointInput('');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const toggleDoor = async () => {
+    if (!controller) return;
+    setDoorSaving(true);
+    try {
+      await onToggleDoor(!controller.door_open);
+    } finally {
+      setDoorSaving(false);
     }
   };
 
@@ -97,6 +109,25 @@ export function DashboardPage({ status, onSetpoint }: Props) {
             />
           )}
         </div>
+      </section>
+
+      <section className="card">
+        <h3 className="section-title">Door Control</h3>
+        <div className="row" style={{ justifyContent: 'space-between' }}>
+          <span className="muted">State: {controller?.door_open ? 'Open' : 'Closed'}</span>
+          <button
+            className="primary"
+            onClick={toggleDoor}
+            disabled={!controller || controller.running || doorSaving}
+          >
+            {doorSaving ? 'Applying...' : (controller?.door_open ? 'Close Door' : 'Open Door')}
+          </button>
+        </div>
+        {controller?.running && (
+          <div className="muted" style={{ marginTop: '0.5rem' }}>
+            Door control is only available while chamber is stopped.
+          </div>
+        )}
       </section>
 
       <section className="card">

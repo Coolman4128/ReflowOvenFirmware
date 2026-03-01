@@ -10,6 +10,7 @@ import { TimeSettingsPage } from './pages/settings/TimeSettingsPage';
 import { WifiSettingsPage } from './pages/settings/WifiSettingsPage';
 import { DataSettingsPage } from './pages/settings/DataSettingsPage';
 import { ControllerSettingsPage } from './pages/settings/ControllerSettingsPage';
+import { DoorCalibrationSettingsPage } from './pages/settings/DoorCalibrationSettingsPage';
 
 type Route =
   | 'dashboard'
@@ -19,7 +20,8 @@ type Route =
   | 'settings-time'
   | 'settings-wifi'
   | 'settings-data'
-  | 'settings-controller';
+  | 'settings-controller'
+  | 'settings-door';
 
 const nav = [
   { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard },
@@ -59,10 +61,18 @@ export default function App() {
     await api.setSetpoint(value);
   };
 
+  const onToggleDoor = async (open: boolean) => {
+    if (open) {
+      await api.openDoor();
+    } else {
+      await api.closeDoor();
+    }
+  };
+
   const renderPage = () => {
     switch (route) {
       case 'dashboard':
-        return <DashboardPage status={status} onSetpoint={onSetpoint} />;
+        return <DashboardPage status={status} onSetpoint={onSetpoint} onToggleDoor={onToggleDoor} />;
       case 'profiles':
         return <ProfilesPage status={status} />;
       case 'data':
@@ -77,8 +87,10 @@ export default function App() {
         return <DataSettingsPage onBack={() => setRoute('settings')} />;
       case 'settings-controller':
         return <ControllerSettingsPage onBack={() => setRoute('settings')} />;
+      case 'settings-door':
+        return <DoorCalibrationSettingsPage onBack={() => setRoute('settings')} chamberRunning={!!status?.controller.running} />;
       default:
-        return <DashboardPage status={status} onSetpoint={onSetpoint} />;
+        return <DashboardPage status={status} onSetpoint={onSetpoint} onToggleDoor={onToggleDoor} />;
     }
   };
 
