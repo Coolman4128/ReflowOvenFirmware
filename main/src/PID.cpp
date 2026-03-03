@@ -97,10 +97,20 @@ double PID::Calculate(double setPoint, double processValue) {
     double iTerm = 0.0;
     if (activeKi > 0.0) {
         iTerm = activeKi * integral;
-        const double iMin = OutputMin - outputNoI;
-        const double iMax = OutputMax - outputNoI;
-        iTerm = std::clamp(iTerm, iMin, iMax);
-        integral = iTerm / activeKi;
+        const bool pdSaturatedHigh = (outputNoI >= OutputMax);
+        const bool pdSaturatedLow = (outputNoI <= OutputMin);
+
+        // If P+D alone is already saturating output, do not back-calculate
+        // integrator to the opposite sign; keep I neutral.
+        if (pdSaturatedHigh || pdSaturatedLow) {
+            iTerm = 0.0;
+            integral = 0.0;
+        } else {
+            const double iMin = OutputMin - outputNoI;
+            const double iMax = OutputMax - outputNoI;
+            iTerm = std::clamp(iTerm, iMin, iMax);
+            integral = iTerm / activeKi;
+        }
     }
 
     const double output = std::clamp(outputNoI + iTerm, OutputMin, OutputMax);
