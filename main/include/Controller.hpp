@@ -39,6 +39,8 @@ class Controller{
         double GetDoorMaxSpeedDegPerSec() const;
         double GetCoolOnBandC() const;
         double GetCoolOffBandC() const;
+        double GetHeaterMinValuePct() const;
+        double GetForceHeaterOnBelowC() const;
         PID* GetPIDController() { return &pidController; }
         std::string GetStateTUI() const;
 
@@ -71,6 +73,7 @@ class Controller{
         esp_err_t SetDoorCalibrationAngles(double closedAngleDeg, double openAngleDeg);
         esp_err_t SetDoorMaxSpeedDegPerSec(double speedDegPerSec);
         esp_err_t SetCoolingDoorBands(double coolOnBandC, double coolOffBandC);
+        esp_err_t SetHeaterBehavior(double heaterMinValuePct, double forceHeaterOnBelowC);
         esp_err_t SetDoorPreviewAngle(double angleDeg);
         esp_err_t ClearDoorPreview();
 
@@ -110,6 +113,8 @@ class Controller{
         double doorPreviewAngleDeg = 90.0;
         double coolOnBandC = 5.0;
         double coolOffBandC = 2.0;
+        double heaterMinValuePct = 0.0;
+        double forceHeaterOnBelowC = 0.0;
         bool coolingDoorEnabled = false;
 
         // Controller Tuning Settings

@@ -79,6 +79,8 @@ Controller::Controller()
     doorMaxSpeedDegPerSec = std::clamp(settings.GetDoorMaxSpeedDegPerSec(), 1.0, 360.0);
     coolOnBandC = settings.GetCoolOnBandC();
     coolOffBandC = settings.GetCoolOffBandC();
+    heaterMinValuePct = std::clamp(settings.GetHeaterMinValuePct(), 0.0, 100.0);
+    forceHeaterOnBelowC = std::max(settings.GetForceHeaterOnBelowC(), 0.0);
     doorPreviewAngleDeg = doorOpenAngleDeg;
 }
 
@@ -178,6 +180,16 @@ double Controller::GetCoolOnBandC() const {
 double Controller::GetCoolOffBandC() const {
     ScopedLock lock(stateMutex);
     return coolOffBandC;
+}
+
+double Controller::GetHeaterMinValuePct() const {
+    ScopedLock lock(stateMutex);
+    return heaterMinValuePct;
+}
+
+double Controller::GetForceHeaterOnBelowC() const {
+    ScopedLock lock(stateMutex);
+    return forceHeaterOnBelowC;
 }
 
 esp_err_t Controller::RunTick() {
@@ -603,6 +615,8 @@ esp_err_t Controller::PerformOnRunning() {
     double processValueCopy = 0.0;
     double coolOnBandCopy = 0.0;
     double coolOffBandCopy = 0.0;
+    double heaterMinValueCopy = 0.0;
+    double forceHeaterOnBelowCopy = 0.0;
     bool coolingEnabledCopy = false;
 
     {
@@ -611,6 +625,8 @@ esp_err_t Controller::PerformOnRunning() {
         processValueCopy = processValue;
         coolOnBandCopy = coolOnBandC;
         coolOffBandCopy = coolOffBandC;
+        heaterMinValueCopy = heaterMinValuePct;
+        forceHeaterOnBelowCopy = forceHeaterOnBelowC;
         coolingEnabledCopy = coolingDoorEnabled;
     }
 
@@ -626,6 +642,20 @@ esp_err_t Controller::PerformOnRunning() {
         effectiveOutput = 0.0;
     }
 
+    const double clampedHeaterMinPct = std::clamp(heaterMinValueCopy, 0.0, 100.0);
+    double heaterOutputPct = 0.0;
+    if (effectiveOutput > 0.0) {
+        const double positiveDemand = std::clamp(effectiveOutput / 100.0, 0.0, 1.0);
+        heaterOutputPct = clampedHeaterMinPct + (100.0 - clampedHeaterMinPct) * positiveDemand;
+    }
+
+    const bool forceHeaterEnabled = (forceHeaterOnBelowCopy > 0.0);
+    const bool shouldForceHeaterOn = forceHeaterEnabled &&
+        (processValueCopy <= (setPointCopy + forceHeaterOnBelowCopy));
+    if (shouldForceHeaterOn) {
+        heaterOutputPct = std::max(heaterOutputPct, clampedHeaterMinPct);
+    }
+
     {
         ScopedLock lock(stateMutex);
         PIDOutput = effectiveOutput;
@@ -636,16 +666,16 @@ esp_err_t Controller::PerformOnRunning() {
         const double doorOpenFraction = ComputeCoolingDoorOpenFraction(effectiveOutput, processValueCopy);
         const double angleFromPercent = ComputeDoorAngleFromFraction(doorOpenFraction);
         ApplyDoorTargetAngle(angleFromPercent, TICK_INTERVAL_MS / 1000.0);
+    } else {
+        ApplyDoorTargetAngle(GetDoorClosedAngleDeg(), TICK_INTERVAL_MS / 1000.0);
+    }
+
+    const double clampedHeaterOutputPct = std::clamp(heaterOutputPct, 0.0, 100.0);
+    if (clampedHeaterOutputPct > 0.0) {
+        relayPWM.SetDutyCycle(static_cast<float>(clampedHeaterOutputPct / 100.0));
+    } else {
         relayPWM.SetDutyCycle(0.0f);
         (void)relayPWM.ForceOff();
-    } else if (effectiveOutput > 0) {
-        double pwmValue = std::min(effectiveOutput / 100, 1.0);
-        relayPWM.SetDutyCycle(static_cast<float>(pwmValue));
-        ApplyDoorTargetAngle(GetDoorClosedAngleDeg(), TICK_INTERVAL_MS / 1000.0);
-    } else {
-        relayPWM.SetDutyCycle(0);
-        (void)relayPWM.ForceOff();
-        ApplyDoorTargetAngle(GetDoorClosedAngleDeg(), TICK_INTERVAL_MS / 1000.0);
     }
 
     return ESP_OK;
@@ -1044,6 +1074,29 @@ esp_err_t Controller::SetCoolingDoorBands(double newCoolOnBandC, double newCoolO
         ScopedLock lock(stateMutex);
         coolOnBandC = newCoolOnBandC;
         coolOffBandC = newCoolOffBandC;
+    }
+    return ESP_OK;
+}
+
+esp_err_t Controller::SetHeaterBehavior(double newHeaterMinValuePct, double newForceHeaterOnBelowC) {
+    if (newHeaterMinValuePct < 0.0 || newHeaterMinValuePct > 100.0 || newForceHeaterOnBelowC < 0.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    SettingsManager& settings = SettingsManager::getInstance();
+    esp_err_t err = settings.SetHeaterMinValuePct(newHeaterMinValuePct);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = settings.SetForceHeaterOnBelowC(newForceHeaterOnBelowC);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    {
+        ScopedLock lock(stateMutex);
+        heaterMinValuePct = newHeaterMinValuePct;
+        forceHeaterOnBelowC = newForceHeaterOnBelowC;
     }
     return ESP_OK;
 }

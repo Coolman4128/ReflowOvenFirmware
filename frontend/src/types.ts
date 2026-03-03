@@ -172,4 +172,8 @@ export interface ControllerConfig {
     cool_on_band_c: number;
     cool_off_band_c: number;
   };
+  heater: {
+    min_value_pct: number;
+    force_on_below_c: number;
+  };
 }

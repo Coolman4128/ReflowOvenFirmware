@@ -333,6 +333,20 @@ esp_err_t SettingsManager::LoadSettings() {
         coolOffBandC = 2.0;
     }
 
+    err = this->nvs_get_double(m_handle, KEY_HEATER_MIN_VALUE, &heaterMinValuePct);
+    if (err == ESP_OK) {
+        heaterMinValuePct = std::clamp(heaterMinValuePct, 0.0, 100.0);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    err = this->nvs_get_double(m_handle, KEY_FORCE_HEATER_BELOW, &forceHeaterOnBelowC);
+    if (err == ESP_OK) {
+        forceHeaterOnBelowC = std::max(forceHeaterOnBelowC, 0.0);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
     return ESP_OK;
 }
 
@@ -531,4 +545,20 @@ esp_err_t SettingsManager::SetCoolOffBandC(double newValue) {
     }
     coolOffBandC = newValue;
     return NVS_Set_Double(KEY_COOL_OFF_BAND, coolOffBandC);
+}
+
+esp_err_t SettingsManager::SetHeaterMinValuePct(double newValue) {
+    if (newValue < 0.0 || newValue > 100.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    heaterMinValuePct = newValue;
+    return NVS_Set_Double(KEY_HEATER_MIN_VALUE, heaterMinValuePct);
+}
+
+esp_err_t SettingsManager::SetForceHeaterOnBelowC(double newValue) {
+    if (newValue < 0.0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    forceHeaterOnBelowC = newValue;
+    return NVS_Set_Double(KEY_FORCE_HEATER_BELOW, forceHeaterOnBelowC);
 }

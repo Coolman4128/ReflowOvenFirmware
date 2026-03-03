@@ -46,6 +46,8 @@ export function ControllerSettingsPage({ onBack }: Props) {
     if (coolOffBand >= coolOnBand) {
       coolOffBand = Math.max(0, coolOnBand - 0.1);
     }
+    const heaterMinValue = Number.isFinite(value.heater?.min_value_pct) ? Math.min(100, Math.max(0, value.heater.min_value_pct)) : 0;
+    const forceOnBelow = Number.isFinite(value.heater?.force_on_below_c) ? Math.max(0, value.heater.force_on_below_c) : 0;
 
     setConfig({
       ...value,
@@ -71,6 +73,10 @@ export function ControllerSettingsPage({ onBack }: Props) {
       cooling: {
         cool_on_band_c: coolOnBand,
         cool_off_band_c: coolOffBand
+      },
+      heater: {
+        min_value_pct: heaterMinValue,
+        force_on_below_c: forceOnBelow
       }
     });
 
@@ -102,6 +108,12 @@ export function ControllerSettingsPage({ onBack }: Props) {
   const saveCooling = async () => {
     if (!config) return;
     await api.updateCoolingConfig(config.cooling);
+    await refresh();
+  };
+
+  const saveHeater = async () => {
+    if (!config) return;
+    await api.updateHeaterConfig(config.heater);
     await refresh();
   };
 
@@ -288,6 +300,45 @@ export function ControllerSettingsPage({ onBack }: Props) {
           Cooling enables when PV {`>`} SP + On Band and disables when PV {`<`} SP + Off Band. Off band must be lower than on band.
         </div>
         <button className="primary" style={{ marginTop: '0.75rem' }} onClick={saveCooling}>Save Cooling Bands</button>
+      </section>
+
+      <section className="card">
+        <h3 className="section-title">Heater Behavior</h3>
+        <div className="grid two">
+          <div>
+            <label className="label">Heater Min Value (%)</label>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              max="100"
+              step="0.1"
+              value={config.heater.min_value_pct}
+              onChange={(e) => setConfig({
+                ...config,
+                heater: { ...config.heater, min_value_pct: Number(e.target.value) }
+              })}
+            />
+          </div>
+          <div>
+            <label className="label">Force Heater On Below (C above SP, 0=off)</label>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              step="0.1"
+              value={config.heater.force_on_below_c}
+              onChange={(e) => setConfig({
+                ...config,
+                heater: { ...config.heater, force_on_below_c: Number(e.target.value) }
+              })}
+            />
+          </div>
+        </div>
+        <div className="muted" style={{ marginTop: '0.5rem' }}>
+          Positive PID output maps heater PWM from Min Value to 100%. With Force On enabled, heater stays at least Min Value until PV rises above SP + Force value.
+        </div>
+        <button className="primary" style={{ marginTop: '0.75rem' }} onClick={saveHeater}>Save Heater Settings</button>
       </section>
 
       <section className="card">

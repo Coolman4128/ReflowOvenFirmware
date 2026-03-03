@@ -100,6 +100,12 @@ class SettingsManager {
         double GetCoolOffBandC() const { return coolOffBandC; }
         esp_err_t SetCoolOffBandC(double newValue);
 
+        double GetHeaterMinValuePct() const { return heaterMinValuePct; }
+        esp_err_t SetHeaterMinValuePct(double newValue);
+
+        double GetForceHeaterOnBelowC() const { return forceHeaterOnBelowC; }
+        esp_err_t SetForceHeaterOnBelowC(double newValue);
+
     private:
         // NVS helper variables
         constexpr static const char* NVS_PARTITION = "nvs";
@@ -154,6 +160,8 @@ class SettingsManager {
         constexpr static const char* KEY_DOOR_MAX_SPEED = "door_spd_dps";
         constexpr static const char* KEY_COOL_ON_BAND = "cool_on_bnd";
         constexpr static const char* KEY_COOL_OFF_BAND = "cool_off_bd";
+        constexpr static const char* KEY_HEATER_MIN_VALUE = "heat_min_pc";
+        constexpr static const char* KEY_FORCE_HEATER_BELOW = "heat_forc_c";
 
         double inputFilterTime = 1000.0;
         uint8_t inputsIncludedMask = 0x01;
@@ -180,6 +188,8 @@ class SettingsManager {
         double doorMaxSpeedDegPerSec = 60.0;
         double coolOnBandC = 5.0;
         double coolOffBandC = 2.0;
+        double heaterMinValuePct = 0.0;
+        double forceHeaterOnBelowC = 0.0;
 
 
 };

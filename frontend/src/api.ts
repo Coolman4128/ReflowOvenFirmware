@@ -99,6 +99,10 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify(payload)
   }),
+  updateHeaterConfig: (payload: { min_value_pct: number; force_on_below_c: number }) => request<{}>('/api/v1/controller/config/heater', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  }),
   updateInputFilter: (input_filter_ms: number) => request<{}>('/api/v1/controller/config/filter', {
     method: 'PUT',
     body: JSON.stringify({ input_filter_ms })

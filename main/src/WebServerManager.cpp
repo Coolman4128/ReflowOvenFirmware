@@ -825,6 +825,11 @@ esp_err_t WebServerManager::HandleApiGet(httpd_req_t* req, const std::string& pa
         cJSON_AddNumberToObject(coolingObj, "cool_off_band_c", controller.GetCoolOffBandC());
         cJSON_AddItemToObject(root, "cooling", coolingObj);
 
+        cJSON* heaterObj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(heaterObj, "min_value_pct", controller.GetHeaterMinValuePct());
+        cJSON_AddNumberToObject(heaterObj, "force_on_below_c", controller.GetForceHeaterOnBelowC());
+        cJSON_AddItemToObject(root, "heater", heaterObj);
+
         return SendJsonSuccess(req, JsonStringFromObject(root));
     }
 
@@ -1342,6 +1347,22 @@ esp_err_t WebServerManager::HandleApiPut(httpd_req_t* req, const std::string& pa
         cJSON_Delete(json);
         if (err != ESP_OK) {
             return SendJsonError(req, 400, "COOLING_UPDATE_FAILED", esp_err_to_name(err));
+        }
+        return SendJsonSuccess(req, "{}");
+    }
+
+    if (path == "/api/v1/controller/config/heater") {
+        cJSON* minValue = cJSON_GetObjectItem(json, "min_value_pct");
+        cJSON* forceOnBelow = cJSON_GetObjectItem(json, "force_on_below_c");
+        if (!cJSON_IsNumber(minValue) || !cJSON_IsNumber(forceOnBelow)) {
+            cJSON_Delete(json);
+            return SendJsonError(req, 400, "BAD_HEATER_ARGS", "min_value_pct and force_on_below_c are required numeric fields");
+        }
+
+        const esp_err_t err = Controller::getInstance().SetHeaterBehavior(minValue->valuedouble, forceOnBelow->valuedouble);
+        cJSON_Delete(json);
+        if (err != ESP_OK) {
+            return SendJsonError(req, 400, "HEATER_UPDATE_FAILED", esp_err_to_name(err));
         }
         return SendJsonSuccess(req, "{}");
     }
